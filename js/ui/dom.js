@@ -70,3 +70,33 @@ export function sel(options, value) {
   s.value = value ?? options[0]?.[0];
   return s;
 }
+
+/**
+ * Live view of the AI at work: its reasoning (dim) and the code it is writing (bright, with a cursor).
+ * Returns { el, update(progress), reset() }. Updates are batched to one paint per frame.
+ */
+export function aiLivePanel() {
+  const head = h('div', { class: 'ai-live-head' });
+  const thought = h('div', { class: 'ai-live-thought' });
+  const code = h('pre', { class: 'ai-live-code' });
+  const body = h('div', { class: 'ai-live-body' }, thought, code);
+  const el = h('div', { class: 'ai-live', hidden: true }, head, body);
+  let pending = null; let raf = 0;
+  const PHASE = { wait: 'AI 서버 대기 중', think: 'AI가 구상 중', write: 'AI가 코드 작성 중', retry: '서버 혼잡 — 다른 모델로 전환 중' };
+  const paint = () => {
+    raf = 0;
+    const p = pending; if (!p) return;
+    el.hidden = false;
+    el.dataset.phase = p.phase;
+    head.textContent = `● ${PHASE[p.phase] || ''} · ${p.secs}초${p.model ? ` · ${p.model.split('/').pop()}` : ''}${p.chars ? ` · ${p.chars}자` : ''}`;
+    thought.textContent = p.thought ? p.thought.slice(-600) : (p.phase === 'wait' || p.phase === 'retry' ? '요청을 보내는 중…' : '');
+    code.textContent = p.text || '';
+    body.scrollTop = body.scrollHeight;
+  };
+  return {
+    el,
+    update(p) { pending = p; if (!raf) raf = requestAnimationFrame(paint); },
+    reset() { pending = null; el.hidden = true; thought.textContent = ''; code.textContent = ''; },
+    finish(ok) { el.dataset.phase = ok ? 'done' : 'fail'; head.textContent = ok ? '✓ 완료' : '✕ 실패'; },
+  };
+}

@@ -1,7 +1,7 @@
 // Admin (password): ask the in-app AI to create new content on the TEST server
 // (stored on this device), test it, then publish to LIVE by exporting
 // content/live.json and committing it to the repository.
-import { h, toast, busy, area } from './dom.js';
+import { h, toast, busy, area, aiLivePanel } from './dom.js';
 import { isAdmin, adminLogin, adminLogout } from '../store.js';
 import { currentServer } from '../config.js';
 import { lib, loadLibrary, saveTestItem, listTestItems, deleteTestItem, listLiveItems, liveFileText } from '../library.js';
@@ -45,17 +45,20 @@ export async function renderAdmin() {
   const renderChat = () => chat.replaceChildren(...history.map((m) => h('div', { class: `chat-msg ${m.role}` },
     m.role === 'user' ? m.content : safeSummary(m.content))));
   const sendBtn = h('button', { class: 'btn ai' }, '✦ AI에게 요청');
+  const live = aiLivePanel();
   sendBtn.addEventListener('click', () => {
     const text = req.value.trim();
     if (!text) return;
     if (!aiAvailable()) return toast('AI 중계 서버가 설정되지 않아 AI를 사용할 수 없습니다.', 'error');
-    busy(sendBtn, generateContent({ request: text, library: lib, history, onProgress: (pg) => { sendBtn.textContent = progressLabel(pg); } }).then(({ bundle, errors, raw }) => {
+    live.reset();
+    busy(sendBtn, generateContent({ request: text, library: lib, history, onProgress: (pg) => { sendBtn.textContent = progressLabel(pg); live.update(pg); } }).then(({ bundle, errors, raw }) => {
+      live.finish(!errors.length);
       history.push({ role: 'user', content: text }, { role: 'assistant', content: raw });
       lastBundle = bundle;
       req.value = '';
       renderBundle(out, bundle, errors);
       renderChat();
-    }).catch((e) => toast(e.message, 'error')), 'AI가 콘텐츠를 만드는 중… (2~5분)');
+    }).catch((e) => { live.finish(false); toast(e.message, 'error'); }), 'AI가 콘텐츠를 만드는 중… (2~5분)');
   });
   renderChat();
 
@@ -63,7 +66,7 @@ export async function renderAdmin() {
     h('div', { class: 'panel' },
       h('h2', {}, '관리자 — 테스트 서버 콘텐츠 제작 AI'),
       h('p', { class: 'hint' }, '이 대화로 만든 콘텐츠는 이 기기의 테스트 서버에 추가됩니다. "방금 캐릭터 체력 올려줘"처럼 이어서 수정 요청도 가능합니다.'),
-      chat, req, h('div', { class: 'row' }, sendBtn, h('button', { class: 'btn', onclick: () => { history.length = 0; lastBundle = null; out.replaceChildren(); renderChat(); } }, '대화 초기화')),
+      chat, req, live.el, h('div', { class: 'row' }, sendBtn, h('button', { class: 'btn', onclick: () => { history.length = 0; lastBundle = null; out.replaceChildren(); renderChat(); } }, '대화 초기화')),
       out),
     await testList(),
     liveList());

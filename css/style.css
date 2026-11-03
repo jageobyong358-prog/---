@@ -331,3 +331,17 @@ h4 { margin: 14px 0 6px; font-size: 13px; color: var(--gold); letter-spacing: 0.
 .check-row { display: flex; align-items: center; gap: 6px; justify-content: space-between; }
 .passives { display: flex; flex-wrap: wrap; gap: 3px; margin-bottom: 4px; }
 .passive-chip { font-size: 10.5px; padding: 1px 6px; border-radius: 3px; color: var(--c); border: 1px solid color-mix(in srgb, var(--c) 60%, transparent); background: color-mix(in srgb, var(--c) 12%, #0d0c0f); cursor: help; }
+
+/* ---------- AI live view ---------- */
+.ai-live { border: 1px solid #4b3577; border-radius: 6px; background: #0c0a10; margin: 8px 0; overflow: hidden; }
+.ai-live-head { font-size: 12px; padding: 6px 10px; background: #1a1326; color: #cdb6ff; font-variant-numeric: tabular-nums; }
+.ai-live[data-phase="write"] .ai-live-head { color: #9effc4; }
+.ai-live[data-phase="done"] .ai-live-head { color: #9effc4; background: #10241a; }
+.ai-live[data-phase="fail"] .ai-live-head { color: var(--err); background: #2a1014; }
+.ai-live-head::first-letter { animation: pulse 1s infinite; }
+.ai-live-body { max-height: 260px; overflow: auto; padding: 8px 10px; font-family: ui-monospace, Consolas, monospace; font-size: 12px; line-height: 1.5; }
+.ai-live-thought { color: #7d7290; font-style: italic; white-space: pre-wrap; word-break: break-word; }
+.ai-live-thought:empty { display: none; }
+.ai-live-code { margin: 6px 0 0; color: #e8f6ff; white-space: pre-wrap; word-break: break-all; }
+.ai-live-code:empty { display: none; }
+.ai-live[data-phase="write"] .ai-live-code::after { content: '▌'; color: #9effc4; animation: pulse 0.8s infinite; }

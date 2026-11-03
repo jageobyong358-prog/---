@@ -49,14 +49,14 @@ export async function callAI({ system, messages, maxTokens = 16000, onProgress }
 
 async function attemptAI({ model, system, messages, maxTokens, onProgress, started, attempt }) {
   const ctrl = new AbortController();
-  const state = { phase: 'wait', chars: 0 };
+  const state = { phase: 'wait', chars: 0, text: '', thought: '', model };
   let lastData = Date.now();
   let timedOut = null;
   const tick = setInterval(() => {
     const now = Date.now();
     if (state.phase === 'wait' && now - lastData > FIRST_DATA_TIMEOUT) { timedOut = '응답 대기 시간이 초과됐습니다.'; ctrl.abort(); }
     else if (state.phase !== 'wait' && now - lastData > STALL_TIMEOUT) { timedOut = 'AI 응답이 멈췄습니다.'; ctrl.abort(); }
-    if (onProgress) onProgress({ phase: state.phase, secs: Math.round((now - started) / 1000), chars: state.chars, attempt });
+    if (onProgress) onProgress({ ...state, secs: Math.round((now - started) / 1000), attempt });
   }, 1000);
   try {
     let r;
@@ -105,7 +105,11 @@ async function attemptAI({ model, system, messages, maxTokens, onProgress, start
           if (!ch) continue;
           lastData = Date.now();
           const d = ch.delta || {};
-          if (d.content) { content += d.content; state.phase = 'write'; state.chars = content.length; } else if (state.phase === 'wait') state.phase = 'think';
+          const thought = d.reasoning_content || d.reasoning || '';
+          if (thought) { state.thought = (state.thought + thought).slice(-4000); }
+          if (d.content) { content += d.content; state.phase = 'write'; state.chars = content.length; state.text = content; } else if (state.phase === 'wait') state.phase = 'think';
+          // live view: report every chunk, not only once a second
+          if (onProgress) onProgress({ ...state, secs: Math.round((Date.now() - started) / 1000), attempt, live: true });
           if (ch.finish_reason) finish = ch.finish_reason;
         }
       }

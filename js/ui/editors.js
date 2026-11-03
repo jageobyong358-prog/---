@@ -1,5 +1,5 @@
 // Character / Skill / Keyword-Passive editors.
-import { h, toast, modal, busy, field, num, txt, area, sel } from './dom.js';
+import { h, toast, modal, busy, field, num, txt, area, sel, aiLivePanel } from './dom.js';
 import { lib, saveItem, deleteItem, newId, getSkill, getEffect, onLibChange } from '../library.js';
 import { imageToDataUrl } from '../store.js';
 import { generateEffect, generateSkillEffects, generateVfx, aiAvailable, progressLabel } from '../ai.js';
@@ -258,22 +258,28 @@ async function editSkill(orig) {
     vfxPrompt: txt('', 'VFX 추가 요청 (예: 검붉은 불꽃이 회오리치게)'),
   };
   const aiEffBtn = h('button', { class: 'btn ai', type: 'button' }, '✦ AI로 효과 구현');
+  const live = aiLivePanel();
+  const liveVfx = aiLivePanel();
   aiEffBtn.addEventListener('click', () => {
     if (!aiAvailable()) return toast('AI 중계 서버가 설정되지 않아 AI를 사용할 수 없습니다.', 'error');
     const skill = { ...s, name: f.name.value, sin: f.sin.value, atkType: f.atk.value, basePower: +f.base.value, coinPower: +f.coin.value, coinCount: +f.cnt.value, desc: f.desc.value };
-    busy(aiEffBtn, generateSkillEffects({ skill, customEffects: lib.effects, onProgress: (pg) => { aiEffBtn.textContent = progressLabel(pg); } }).then(({ effects, errors }) => {
+    live.reset();
+    busy(aiEffBtn, generateSkillEffects({ skill, customEffects: lib.effects, onProgress: (pg) => { aiEffBtn.textContent = progressLabel(pg); live.update(pg); } }).then(({ effects, errors }) => {
+      live.finish(!errors.length);
       f.effects.value = JSON.stringify(effects, null, 2);
       toast(errors.length ? `생성됨 (검증 경고: ${errors.join(', ')})` : 'AI가 스킬 효과를 구현했습니다.', errors.length ? 'error' : 'ok');
-    }).catch((e) => toast(e.message, 'error')));
+    }).catch((e) => { live.finish(false); toast(e.message, 'error'); }));
   });
   const aiVfxBtn = h('button', { class: 'btn ai', type: 'button' }, '✦ AI VFX 생성');
   aiVfxBtn.addEventListener('click', () => {
     if (!aiAvailable()) return toast('AI 중계 서버가 설정되지 않아 AI를 사용할 수 없습니다.', 'error');
     const skill = { ...s, name: f.name.value, sin: f.sin.value, atkType: f.atk.value, type: f.type.value, desc: f.desc.value };
-    busy(aiVfxBtn, generateVfx({ skill, prompt: f.vfxPrompt.value, onProgress: (pg) => { aiVfxBtn.textContent = progressLabel(pg); } }).then((spec) => {
+    liveVfx.reset();
+    busy(aiVfxBtn, generateVfx({ skill, prompt: f.vfxPrompt.value, onProgress: (pg) => { aiVfxBtn.textContent = progressLabel(pg); liveVfx.update(pg); } }).then((spec) => {
+      liveVfx.finish(true);
       f.vfx.value = JSON.stringify(spec, null, 2);
       playVfx(spec, null, 1);
-    }).catch((e) => toast(e.message, 'error')));
+    }).catch((e) => { liveVfx.finish(false); toast(e.message, 'error'); }));
   });
   const previewBtn = h('button', { class: 'btn', type: 'button', onclick: () => {
     let spec;
@@ -289,9 +295,11 @@ async function editSkill(orig) {
     h('div', { class: 'grid4' }, field('기본 위력', f.base), field('코인 위력', f.coin, '음수 = 마이너스 코인'), field('코인 개수', f.cnt), field('공격 레벨 보정', f.off)),
     field('효과 설명', f.desc),
     h('div', { class: 'row' }, aiEffBtn, h('small', { class: 'hint' }, '설명을 쓰고 누르면 AI가 실제로 동작하는 효과 데이터를 만듭니다.')),
+    live.el,
     field('효과 데이터 (JSON)', f.effects),
     h('h4', {}, 'VFX'),
     h('div', { class: 'row' }, f.vfxPrompt, aiVfxBtn, previewBtn),
+    liveVfx.el,
     f.vfx,
     h('h4', {}, '합 진행 메시지'), messagesEditor(s.messages));
 
@@ -339,17 +347,20 @@ async function editEffect(orig, preset = {}) {
   f.kind.addEventListener('change', syncKind);
   syncKind();
   const aiBtn = h('button', { class: 'btn ai', type: 'button' }, '✦ AI로 구현');
+  const live = aiLivePanel();
   aiBtn.addEventListener('click', () => {
     if (!f.desc.value.trim()) return toast('효과 설명을 입력하세요.', 'error');
     if (!aiAvailable()) return toast('AI 중계 서버가 설정되지 않아 AI를 사용할 수 없습니다.', 'error');
-    busy(aiBtn, generateEffect({ kind: f.kind.value, name: f.name.value, description: f.desc.value, existing: lib.effects, onProgress: (pg) => { aiBtn.textContent = progressLabel(pg); } }).then(({ effect, errors }) => {
+    live.reset();
+    busy(aiBtn, generateEffect({ kind: f.kind.value, name: f.name.value, description: f.desc.value, existing: lib.effects, onProgress: (pg) => { aiBtn.textContent = progressLabel(pg); live.update(pg); } }).then(({ effect, errors }) => {
+      live.finish(!errors.length);
       if (!f.name.value && effect.name) f.name.value = effect.name;
       if (effect.color) f.color.value = effect.color;
       e.turnOnly = !!effect.turnOnly;
       f.hooks.value = JSON.stringify(effect.hooks || {}, null, 2);
       if (effect.desc) e.aiDesc = effect.desc;
       toast(errors.length ? `검증 오류: ${errors.join(' / ')}` : 'AI 구현 완료 — 코드가 검증되었습니다.', errors.length ? 'error' : 'ok');
-    }).catch((err) => toast(err.message, 'error')));
+    }).catch((err) => { live.finish(false); toast(err.message, 'error'); }));
   });
   const checkBtn = h('button', { class: 'btn', type: 'button' }, '코드 검증');
   checkBtn.addEventListener('click', async () => {
@@ -362,7 +373,7 @@ async function editEffect(orig, preset = {}) {
     overrideNote(orig),
     h('div', { class: 'grid3' }, field('종류', f.kind), field('이름', f.name), field('색상', f.color)),
     field('효과 설명 (자연어)', f.desc, '원하는 효과를 자유롭게 적으면 AI가 전투 엔진에서 실제로 동작하는 코드로 구현합니다.'),
-    h('div', { class: 'row' }, aiBtn, checkBtn), status,
+    h('div', { class: 'row' }, aiBtn, checkBtn), live.el, status,
     field('구현 코드 (훅 → JS 본문)', f.hooks, '고급: 직접 수정할 수 있습니다. 코드는 격리된 샌드박스에서만 실행됩니다.'));
   const actions = editActions(orig);
   const r = await modal(orig ? `${orig.kind === 'passive' ? '패시브' : '키워드'} 편집 — ${orig.name}` : (e.kind === 'passive' ? '새 패시브' : '새 키워드'), body, actions);
