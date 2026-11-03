@@ -1,51 +1,40 @@
-// Claude integration: keyword / passive code generation, skill effects,
+// AI integration: keyword / passive code generation, skill effects,
 // VFX specs, and admin content generation.
 //
-// Called from the browser with the Anthropic SDK, using the key from Settings
-// (this device) or, if empty, the site-wide key in js/config.js.
+// The site calls an OpenAI-compatible chat endpoint through the relay in
+// worker/ai-proxy.js (CONFIG.aiProxyUrl), which holds the NVIDIA API key.
 import { CONFIG } from './config.js';
-import { settings } from './store.js';
 import { sandbox } from './sandbox.js';
 
-const SDK_URL = 'https://cdn.jsdelivr.net/npm/@anthropic-ai/sdk@0.135.0/+esm';
-let sdkClient = null; let sdkKey = null;
+export function aiAvailable() { return !!CONFIG.aiProxyUrl; }
 
-async function directClient(apiKey) {
-  if (sdkClient && sdkKey === apiKey) return sdkClient;
-  const { default: Anthropic } = await import(SDK_URL);
-  sdkClient = new Anthropic({ apiKey, dangerouslyAllowBrowser: true });
-  sdkKey = apiKey;
-  return sdkClient;
-}
-
-function apiKey() { return (settings.get().apiKey || CONFIG.anthropicApiKey || '').trim(); }
-
-export function aiAvailable() { return !!apiKey(); }
-
-/** Low-level call. Returns the text of the final response. */
-export async function callClaude({ system, messages, maxTokens = 16000 }) {
-  const s = settings.get();
-  const body = {
-    model: CONFIG.model,
-    max_tokens: maxTokens,
-    system,
-    messages,
-    output_config: { effort: s.effort || 'medium' },
-  };
-  const key = apiKey();
-  if (!key) throw new Error('AI를 사용하려면 설정 탭에서 Anthropic API 키(sk-ant-…)를 입력하세요.');
-  if (!key.startsWith('sk-ant-')) throw new Error('Anthropic API 키가 아닙니다. sk-ant- 로 시작하는 키가 필요합니다.');
-  const client = await directClient(key);
-  // Streaming avoids HTTP timeouts on long generations (admin bundles).
-  const resp = await client.beta.messages.stream({
-    ...body,
-    betas: ['server-side-fallback-2026-07-01'],
-    fallbacks: 'default',
-  }).finalMessage();
-  if (resp.stop_reason === 'refusal') {
-    throw new Error('AI가 이 요청을 처리하지 않았습니다. 설명을 바꿔서 다시 시도해 주세요.');
+/** Low-level call. Returns the text of the model's reply. */
+export async function callAI({ system, messages, maxTokens = 16000 }) {
+  if (!CONFIG.aiProxyUrl) throw new Error('AI 중계 서버 주소(js/config.js 의 aiProxyUrl)가 설정되지 않았습니다.');
+  let r;
+  try {
+    r = await fetch(CONFIG.aiProxyUrl, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ model: CONFIG.aiModel, max_tokens: maxTokens, messages: [{ role: 'system', content: system }, ...messages] }),
+    });
+  } catch {
+    throw new Error('AI 중계 서버에 연결하지 못했습니다. 잠시 후 다시 시도해 주세요.');
   }
-  return (resp.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('');
+  const text = await r.text();
+  let data = null;
+  try { data = JSON.parse(text); } catch { /* not json */ }
+  if (!r.ok) {
+    const msg = data?.detail || data?.error?.message || data?.title || text.slice(0, 200);
+    if (r.status === 429) throw new Error('AI 요청이 너무 많습니다. 잠시 후 다시 시도해 주세요.');
+    throw new Error(`AI 오류 (${r.status}): ${msg}`);
+  }
+  const choice = data?.choices?.[0];
+  if (!choice) throw new Error('AI 응답이 비어 있습니다.');
+  if (choice.message?.refusal) throw new Error('AI가 이 요청을 처리하지 않았습니다. 설명을 바꿔서 다시 시도해 주세요.');
+  if (choice.finish_reason === 'length') throw new Error('AI 응답이 너무 길어 중간에 잘렸습니다. 요청을 나눠서 다시 시도해 주세요.');
+  // some models wrap reasoning in <think> tags
+  return String(choice.message?.content || '').replace(/<think>[\s\S]*?<\/think>/g, '').trim();
 }
 
 /** Pull the first JSON object/array out of a model response. */
@@ -157,13 +146,13 @@ export async function generateEffect({ kind, name, description, existing = [] })
 - 수치는 정수로 반올림하세요. 무한 루프 금지.
 - 이미 존재하는 커스텀 효과 id: ${existing.map((e) => `${e.id}(${e.name})`).join(', ') || '없음'}`;
   const messages = [{ role: 'user', content: `종류: ${kind === 'keyword' ? '키워드(상태이상)' : '패시브'}\n이름: ${name || '(AI가 정해 주세요)'}\n효과 설명: ${description}` }];
-  let effect = extractJson(await callClaude({ task: 'effect', system, messages }));
+  let effect = extractJson(await callAI({ task: 'effect', system, messages }));
   let errors = await validateWithSandbox(effect);
   if (errors.length) {
     // one self-repair round
     messages.push({ role: 'assistant', content: JSON.stringify(effect) });
     messages.push({ role: 'user', content: `코드 검증 오류가 있습니다. 수정한 전체 JSON을 다시 출력하세요:\n${errors.join('\n')}` });
-    effect = extractJson(await callClaude({ task: 'effect', system, messages }));
+    effect = extractJson(await callAI({ task: 'effect', system, messages }));
     errors = await validateWithSandbox(effect);
   }
   return { effect, errors };
@@ -186,7 +175,7 @@ export async function generateSkillEffects({ skill, customEffects = [] }) {
 - "script": code (위 효과 코드 API의 JS 본문, ctx.self=사용자, ctx.target=대상. 단순 동작으로 표현할 수 없는 조건부 효과에 사용)
 사용 가능한 커스텀 키워드 id: ${customEffects.filter((e) => e.kind === 'keyword').map((e) => `${e.id}(${e.name})`).join(', ') || '없음'}`;
   const messages = [{ role: 'user', content: `스킬: ${skill.name} (죄악 ${skill.sin}, ${skill.atkType}, 위력 ${skill.basePower}+${skill.coinPower}x${skill.coinCount})\n효과 설명: ${skill.desc}` }];
-  const effects = extractJson(await callClaude({ task: 'skillEffects', system, messages }));
+  const effects = extractJson(await callAI({ task: 'skillEffects', system, messages }));
   const list = Array.isArray(effects) ? effects : [];
   const scriptErrors = [];
   for (const e of list.filter((x) => x.do === 'script')) {
@@ -201,7 +190,7 @@ export async function generateVfx({ skill, prompt }) {
 ## 출력
 스킬 연출에 어울리는 화려한 VFX JSON 객체 하나만 출력하세요. 죄악 속성 색과 공격 유형(참격=베기 궤적, 관통=빔/찌르기, 타격=충격파/파편)을 반영하세요. 레이어는 3~7개.`;
   const messages = [{ role: 'user', content: `스킬: ${skill.name}\n죄악: ${skill.sin}\n공격 유형: ${skill.atkType}\n스킬 유형: ${skill.type}\n설명: ${skill.desc || ''}\n추가 요청: ${prompt || '없음'}` }];
-  return extractJson(await callClaude({ task: 'vfx', system, messages, maxTokens: 4000 }));
+  return extractJson(await callAI({ task: 'vfx', system, messages, maxTokens: 4000 }));
 }
 
 /** Admin: natural-language request -> bundle of new content. */
@@ -222,7 +211,7 @@ JSON 객체 하나만 출력합니다:
 기존 콘텐츠 id (재사용 가능): 캐릭터 ${library.characters.map((c) => c.id).join(', ')} / 스킬 ${library.skills.map((s) => s.id).join(', ')} / 효과 ${library.effects.map((e) => e.id).join(', ')}
 새로 만드는 id 는 기존 id 와 겹치지 않게 하세요.`;
   const messages = [...history, { role: 'user', content: request }];
-  const text = await callClaude({ task: 'admin', system, messages, maxTokens: 32000 });
+  const text = await callAI({ task: 'admin', system, messages, maxTokens: 32000 });
   const bundle = extractJson(text);
   const errors = [];
   for (const e of bundle.effects || []) {

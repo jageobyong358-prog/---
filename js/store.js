@@ -66,7 +66,7 @@ export function adminLogout() { try { localStorage.removeItem('lbs.admin'); } ca
 // ---------------------------------------------------------------------------
 // Settings stay on this device.
 // ---------------------------------------------------------------------------
-const DEFAULT_SETTINGS = { apiKey: '', effort: 'medium', autoVfx: true, speed: 1 };
+const DEFAULT_SETTINGS = { autoVfx: true, speed: 1 };
 export const settings = {
   get() {
     try { return Object.assign({}, DEFAULT_SETTINGS, JSON.parse(localStorage.getItem('lbs.settings') || '{}')); } catch { return { ...DEFAULT_SETTINGS }; }

@@ -201,7 +201,7 @@ async function editSkill(orig) {
   };
   const aiEffBtn = h('button', { class: 'btn ai', type: 'button' }, '✦ AI로 효과 구현');
   aiEffBtn.addEventListener('click', () => {
-    if (!aiAvailable()) return toast('설정 탭에서 API 키를 입력하거나 AI 프록시를 설정하세요.', 'error');
+    if (!aiAvailable()) return toast('AI 중계 서버가 설정되지 않아 AI를 사용할 수 없습니다.', 'error');
     const skill = { ...s, name: f.name.value, sin: f.sin.value, atkType: f.atk.value, basePower: +f.base.value, coinPower: +f.coin.value, coinCount: +f.cnt.value, desc: f.desc.value };
     busy(aiEffBtn, generateSkillEffects({ skill, customEffects: lib.effects }).then(({ effects, errors }) => {
       f.effects.value = JSON.stringify(effects, null, 2);
@@ -210,7 +210,7 @@ async function editSkill(orig) {
   });
   const aiVfxBtn = h('button', { class: 'btn ai', type: 'button' }, '✦ AI VFX 생성');
   aiVfxBtn.addEventListener('click', () => {
-    if (!aiAvailable()) return toast('설정 탭에서 API 키를 입력하거나 AI 프록시를 설정하세요.', 'error');
+    if (!aiAvailable()) return toast('AI 중계 서버가 설정되지 않아 AI를 사용할 수 없습니다.', 'error');
     const skill = { ...s, name: f.name.value, sin: f.sin.value, atkType: f.atk.value, type: f.type.value, desc: f.desc.value };
     busy(aiVfxBtn, generateVfx({ skill, prompt: f.vfxPrompt.value }).then((spec) => {
       f.vfx.value = JSON.stringify(spec, null, 2);
@@ -268,7 +268,7 @@ async function editEffect(orig) {
   const aiBtn = h('button', { class: 'btn ai', type: 'button' }, '✦ AI로 구현');
   aiBtn.addEventListener('click', () => {
     if (!f.desc.value.trim()) return toast('효과 설명을 입력하세요.', 'error');
-    if (!aiAvailable()) return toast('설정 탭에서 API 키를 입력하거나 AI 프록시를 설정하세요.', 'error');
+    if (!aiAvailable()) return toast('AI 중계 서버가 설정되지 않아 AI를 사용할 수 없습니다.', 'error');
     busy(aiBtn, generateEffect({ kind: f.kind.value, name: f.name.value, description: f.desc.value, existing: lib.effects }).then(({ effect, errors }) => {
       if (!f.name.value && effect.name) f.name.value = effect.name;
       if (effect.color) f.color.value = effect.color;

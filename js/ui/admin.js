@@ -48,7 +48,7 @@ export async function renderAdmin() {
   sendBtn.addEventListener('click', () => {
     const text = req.value.trim();
     if (!text) return;
-    if (!aiAvailable()) return toast('Anthropic API 키가 필요합니다 (설정 탭 또는 js/config.js).', 'error');
+    if (!aiAvailable()) return toast('AI 중계 서버가 설정되지 않아 AI를 사용할 수 없습니다.', 'error');
     busy(sendBtn, generateContent({ request: text, library: lib, history }).then(({ bundle, errors, raw }) => {
       history.push({ role: 'user', content: text }, { role: 'assistant', content: raw });
       lastBundle = bundle;

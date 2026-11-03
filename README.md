@@ -1,7 +1,7 @@
 # 합(合) 전투 시뮬레이터
 
 림버스 컴퍼니식 전투 규칙(합 · 코인 · 피해량 · 내성 · 죄악 속성 · 공격/방어 레벨)으로 동작하는 웹 전투 시뮬레이터입니다.
-키워드 · 패시브는 자연어로 설명하면 **AI(Claude)가 실제 동작하는 코드로 구현**하고, 스킬 VFX도 AI가 만듭니다.
+키워드 · 패시브는 자연어로 설명하면 **AI가 실제 동작하는 코드로 구현**하고, 스킬 VFX도 AI가 만듭니다.
 
 - 계정 없이 바로 플레이, 만든 콘텐츠는 이 기기의 브라우저(IndexedDB)에 저장
 - 캐릭터 / 스킬 이미지 업로드
@@ -46,12 +46,22 @@ python3 -m http.server 8080   # 아무 정적 서버
 
 **보안**: 사용자/AI가 만든 코드는 페이지와 분리된 `sandbox="allow-scripts"` iframe(불투명 origin, 네트워크 차단 CSP) 안의 전투 엔진에서만 실행됩니다. 로그인 정보·저장소·DOM 에 접근할 수 없습니다.
 
-## 설정 (`js/config.js`)
+## AI 설정 (NVIDIA API + 중계 서버)
 
-- **`anthropicApiKey`**: 사이트 공용 Anthropic API 키(`sk-ant-…`). 넣으면 모든 방문자가 바로 AI 기능을 씁니다.
-  ⚠ 정적 사이트라 **방문자 누구나 이 키를 볼 수 있습니다.** 이 사이트 전용 키를 따로 만들고 Anthropic 콘솔에서 월 사용 한도를 걸어 두세요. 비워 두면 각 사용자가 **설정** 탭에 자기 키를 넣습니다(그 브라우저에만 저장).
-- **`adminPasswordHash`**: 관리자 코드의 SHA-256 해시(설정되어 있음). 관리자 탭에서 코드를 입력하면 그 브라우저에서 관리자 기능이 켜집니다. 코드를 바꾸려면 새 코드의 SHA-256 해시로 교체하세요 (`printf '새코드' | sha256sum`).
-- **`model`**: 사용할 Claude 모델 (기본 `claude-opus-5-5`). 거절 응답 대비 서버측 fallback(`fallbacks: "default"`)을 켜 두었습니다.
+AI는 NVIDIA API(`integrate.api.nvidia.com`, OpenAI 호환)를 씁니다. NVIDIA API는 웹페이지에서 직접 호출하는 것을 막아 두었기 때문에(CORS),
+키를 보관하고 대신 호출해 주는 **Cloudflare Worker 중계 서버**(`worker/ai-proxy.js`, 무료)를 거칩니다. 키는 공개 저장소에 들어가지 않습니다.
+
+1. https://dash.cloudflare.com 가입 → **Workers & Pages → Create → Create Worker** → 이름 정하고 **Deploy**
+2. **Edit code** 에서 기본 코드를 모두 지우고 `worker/ai-proxy.js` 내용을 붙여 넣은 뒤 **Deploy**
+3. Worker의 **Settings → Variables and Secrets → Add** → Type `Secret`, 이름 `NVIDIA_API_KEY`, 값 `nvapi-…` → **Deploy**
+4. Worker 주소(`https://이름.계정.workers.dev`)를 `js/config.js` 의 `aiProxyUrl` 에 넣고 커밋
+
+`js/config.js`:
+- **`aiProxyUrl`**: 중계 서버 주소. 비어 있으면 AI 기능이 꺼집니다.
+- **`aiModel`**: 모델 (기본 `minimaxai/minimax-m3.1-flash`). `worker/ai-proxy.js` 의 `ALLOWED_MODELS` 안에서 고릅니다.
+- **`adminPasswordHash`**: 관리자 코드의 SHA-256 해시. 코드를 바꾸려면 `printf '새코드' | sha256sum` 결과로 교체하세요.
+
+중계 서버는 이 사이트 주소(`ALLOWED_ORIGINS`)에서 온 요청만 받고, 모델과 최대 토큰을 제한합니다. 생성 한 번에 30초~1분 30초 정도 걸립니다.
 
 ## 서버 구조
 
@@ -72,7 +82,8 @@ index.html, css/style.css
 js/engine/engine.js   전투 엔진 (샌드박스 안에서 실행)
 js/sandbox.js         엔진 샌드박스 iframe
 js/defaults.js        기본 캐릭터·스킬·패시브 (오리지널)
-js/ai.js              Claude 연동 (키워드/스킬 효과/VFX/관리자 콘텐츠)
+js/ai.js              AI 연동 (키워드/스킬 효과/VFX/관리자 콘텐츠)
+worker/ai-proxy.js    AI 중계 서버 (Cloudflare Worker, NVIDIA API 키 보관)
 js/vfx.js             캔버스 VFX, 흔들리는 메시지, 데미지 숫자
 js/recorder.js        전투 영상 녹화/다운로드
 js/store.js           IndexedDB 저장, 관리자 비밀번호 확인, 설정

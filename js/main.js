@@ -1,4 +1,4 @@
-import { h, toast, field, sel } from './ui/dom.js';
+import { h, toast } from './ui/dom.js';
 import { isAdmin, settings } from './store.js';
 import { CONFIG, currentServer } from './config.js';
 import { loadLibrary } from './library.js';
@@ -32,20 +32,14 @@ function renderHeader() {
 
 function renderSettings() {
   const s = settings.get();
-  const key = h('input', { type: 'password', class: 'inp', value: s.apiKey, placeholder: 'sk-ant-...', autocomplete: 'off' });
-  const effort = sel([['low', '낮음 (빠름)'], ['medium', '보통'], ['high', '높음 (정교함)']], s.effort);
   const autoVfx = h('input', { type: 'checkbox', checked: s.autoVfx });
   document.getElementById('tab-settings').replaceChildren(h('div', { class: 'panel' },
     h('h2', {}, '설정'),
     h('h3', {}, 'AI'),
-    CONFIG.anthropicApiKey ? h('p', { class: 'hint' }, '✓ 사이트 공용 API 키가 설정되어 있습니다. 아래에 키를 넣으면 이 기기에서는 그 키를 대신 사용합니다.') : null,
-    field('Anthropic API 키 (sk-ant-…, 이 기기에만 저장)', key, '키는 이 브라우저에만 저장됩니다.'),
-    field('AI 생각 깊이', effort),
+    h('p', { class: CONFIG.aiProxyUrl ? '' : 'hint' }, CONFIG.aiProxyUrl ? `✓ AI 사용 가능 (모델: ${CONFIG.aiModel})` : 'AI 중계 서버가 아직 설정되지 않아 AI 기능을 사용할 수 없습니다.'),
     h('label', { class: 'check' }, autoVfx, ' 전투 시작 시 VFX가 없는 스킬은 VFX AI가 자동 생성'),
     h('div', { class: 'row' }, h('button', { class: 'btn primary', onclick: () => {
-      const k = key.value.trim();
-      if (k && !k.startsWith('sk-ant-')) return toast('Anthropic API 키는 sk-ant- 로 시작합니다.', 'error');
-      settings.set({ apiKey: k, effort: effort.value, autoVfx: autoVfx.checked });
+      settings.set({ autoVfx: autoVfx.checked });
       toast('저장했습니다.', 'ok');
     } }, '저장')),
     h('h3', {}, '저장 위치'),
