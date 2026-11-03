@@ -8,33 +8,62 @@ import { sandbox } from './sandbox.js';
 
 export function aiAvailable() { return !!CONFIG.aiProxyUrl; }
 
-/** Low-level call. Returns the text of the model's reply. */
-export async function callAI({ system, messages, maxTokens = 16000 }) {
+/** Low-level call. Streams the reply (server-sent events) and returns its text. */
+export async function callAI({ system, messages, maxTokens = 16000, onProgress }) {
   if (!CONFIG.aiProxyUrl) throw new Error('AI 중계 서버 주소(js/config.js 의 aiProxyUrl)가 설정되지 않았습니다.');
   let r;
   try {
     r = await fetch(CONFIG.aiProxyUrl, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ model: CONFIG.aiModel, max_tokens: maxTokens, messages: [{ role: 'system', content: system }, ...messages] }),
+      body: JSON.stringify({
+        model: CONFIG.aiModel,
+        reasoning_effort: CONFIG.aiReasoning || 'low',
+        max_tokens: maxTokens,
+        messages: [{ role: 'system', content: system }, ...messages],
+      }),
     });
   } catch {
     throw new Error('AI 중계 서버에 연결하지 못했습니다. 잠시 후 다시 시도해 주세요.');
   }
-  const text = await r.text();
-  let data = null;
-  try { data = JSON.parse(text); } catch { /* not json */ }
   if (!r.ok) {
-    const msg = data?.detail || data?.error?.message || data?.title || text.slice(0, 200);
+    const text = await r.text();
+    let data = null; try { data = JSON.parse(text); } catch { /* not json */ }
     if (r.status === 429) throw new Error('AI 요청이 너무 많습니다. 잠시 후 다시 시도해 주세요.');
-    throw new Error(`AI 오류 (${r.status}): ${msg}`);
+    if (r.status === 524 || r.status === 504) throw new Error('AI 응답이 너무 오래 걸려 끊겼습니다. 잠시 후 다시 시도해 주세요.');
+    throw new Error(`AI 오류 (${r.status}): ${data?.detail || data?.error?.message || data?.title || text.slice(0, 200)}`);
   }
-  const choice = data?.choices?.[0];
-  if (!choice) throw new Error('AI 응답이 비어 있습니다.');
-  if (choice.message?.refusal) throw new Error('AI가 이 요청을 처리하지 않았습니다. 설명을 바꿔서 다시 시도해 주세요.');
-  if (choice.finish_reason === 'length') throw new Error('AI 응답이 너무 길어 중간에 잘렸습니다. 요청을 나눠서 다시 시도해 주세요.');
-  // some models wrap reasoning in <think> tags
-  return String(choice.message?.content || '').replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+  const reader = r.body.getReader();
+  const dec = new TextDecoder();
+  let buf = ''; let content = ''; let finish = null;
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let nl;
+      while ((nl = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, nl).trim(); buf = buf.slice(nl + 1);
+        if (!line.startsWith('data:')) continue;
+        const payload = line.slice(5).trim();
+        if (payload === '[DONE]') continue;
+        let j; try { j = JSON.parse(payload); } catch { continue; }
+        if (j.error) throw new Error(`AI 오류: ${j.error.message || JSON.stringify(j.error)}`);
+        const ch = j.choices && j.choices[0];
+        if (!ch) continue;
+        if (ch.delta && ch.delta.content) { content += ch.delta.content; if (onProgress) onProgress(content.length); }
+        if (ch.finish_reason) finish = ch.finish_reason;
+      }
+    }
+  } catch (e) {
+    if (e.message.startsWith('AI 오류')) throw e;
+    throw new Error('AI 응답을 받는 중 연결이 끊겼습니다. 다시 시도해 주세요.');
+  }
+  if (finish === 'length') throw new Error('AI 응답이 너무 길어 중간에 잘렸습니다. 요청을 나눠서 다시 시도해 주세요.');
+  // some models wrap reasoning in <think> tags inside the content
+  content = content.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+  if (!content) throw new Error('AI 응답이 비어 있습니다. 다시 시도해 주세요.');
+  return content;
 }
 
 /** Pull the first JSON object/array out of a model response. */
@@ -146,13 +175,13 @@ export async function generateEffect({ kind, name, description, existing = [] })
 - 수치는 정수로 반올림하세요. 무한 루프 금지.
 - 이미 존재하는 커스텀 효과 id: ${existing.map((e) => `${e.id}(${e.name})`).join(', ') || '없음'}`;
   const messages = [{ role: 'user', content: `종류: ${kind === 'keyword' ? '키워드(상태이상)' : '패시브'}\n이름: ${name || '(AI가 정해 주세요)'}\n효과 설명: ${description}` }];
-  let effect = extractJson(await callAI({ task: 'effect', system, messages }));
+  let effect = extractJson(await callAI({ system, messages }));
   let errors = await validateWithSandbox(effect);
   if (errors.length) {
     // one self-repair round
     messages.push({ role: 'assistant', content: JSON.stringify(effect) });
     messages.push({ role: 'user', content: `코드 검증 오류가 있습니다. 수정한 전체 JSON을 다시 출력하세요:\n${errors.join('\n')}` });
-    effect = extractJson(await callAI({ task: 'effect', system, messages }));
+    effect = extractJson(await callAI({ system, messages }));
     errors = await validateWithSandbox(effect);
   }
   return { effect, errors };
@@ -175,7 +204,7 @@ export async function generateSkillEffects({ skill, customEffects = [] }) {
 - "script": code (위 효과 코드 API의 JS 본문, ctx.self=사용자, ctx.target=대상. 단순 동작으로 표현할 수 없는 조건부 효과에 사용)
 사용 가능한 커스텀 키워드 id: ${customEffects.filter((e) => e.kind === 'keyword').map((e) => `${e.id}(${e.name})`).join(', ') || '없음'}`;
   const messages = [{ role: 'user', content: `스킬: ${skill.name} (죄악 ${skill.sin}, ${skill.atkType}, 위력 ${skill.basePower}+${skill.coinPower}x${skill.coinCount})\n효과 설명: ${skill.desc}` }];
-  const effects = extractJson(await callAI({ task: 'skillEffects', system, messages }));
+  const effects = extractJson(await callAI({ system, messages }));
   const list = Array.isArray(effects) ? effects : [];
   const scriptErrors = [];
   for (const e of list.filter((x) => x.do === 'script')) {
@@ -190,14 +219,49 @@ export async function generateVfx({ skill, prompt }) {
 ## 출력
 스킬 연출에 어울리는 화려한 VFX JSON 객체 하나만 출력하세요. 죄악 속성 색과 공격 유형(참격=베기 궤적, 관통=빔/찌르기, 타격=충격파/파편)을 반영하세요. 레이어는 3~7개.`;
   const messages = [{ role: 'user', content: `스킬: ${skill.name}\n죄악: ${skill.sin}\n공격 유형: ${skill.atkType}\n스킬 유형: ${skill.type}\n설명: ${skill.desc || ''}\n추가 요청: ${prompt || '없음'}` }];
-  return extractJson(await callAI({ task: 'vfx', system, messages, maxTokens: 4000 }));
+  return extractJson(await callAI({ system, messages, maxTokens: 4000 }));
+}
+
+const SKILL_OPS = ['inflict', 'gainSP', 'heal', 'damage', 'tremorBurst', 'power', 'damagePct', 'script'];
+
+/** Validate an admin bundle: effect code compiles, skill effects / references are valid. */
+async function checkBundle(bundle, library) {
+  const errors = [];
+  const statusIds = new Set([...(sandbox.builtins || []).map((b) => b.id), ...library.effects.map((e) => e.id), ...(bundle.effects || []).map((e) => e.id)]);
+  const skillIds = new Set([...library.skills.map((x) => x.id), ...(bundle.skills || []).map((x) => x.id)]);
+  for (const e of bundle.effects || []) {
+    const errs = await validateWithSandbox(e);
+    if (errs.length) errors.push(`효과 ${e.id}: ${errs.join(', ')}`);
+  }
+  for (const sk of bundle.skills || []) {
+    for (const ef of sk.effects || []) {
+      if (!SKILL_OPS.includes(ef.do)) errors.push(`스킬 ${sk.id}: 알 수 없는 동작 do="${ef.do}"`);
+      if (ef.do === 'inflict' && !statusIds.has(ef.status)) errors.push(`스킬 ${sk.id}: 없는 키워드 status="${ef.status}"`);
+      if (ef.do === 'script') {
+        const errs = await validateWithSandbox({ hooks: { onHit: ef.code || '' } });
+        if (errs.length) errors.push(`스킬 ${sk.id} script: ${errs.join(', ')}`);
+      }
+    }
+  }
+  for (const c of bundle.characters || []) {
+    for (const x of c.skills || []) if (!skillIds.has(x.id)) errors.push(`캐릭터 ${c.id}: 없는 스킬 "${x.id}"`);
+    if (c.defense && !skillIds.has(c.defense)) errors.push(`캐릭터 ${c.id}: 없는 수비 스킬 "${c.defense}"`);
+    for (const pid of c.passives || []) if (!statusIds.has(pid)) errors.push(`캐릭터 ${c.id}: 없는 패시브 "${pid}"`);
+  }
+  return errors;
 }
 
 /** Admin: natural-language request -> bundle of new content. */
 export async function generateContent({ request, library, history = [] }) {
   const system = RULES + HOOK_DOC + VFX_DOC + `
 ## 관리자 콘텐츠 제작
-관리자의 요청에 따라 새 캐릭터/스킬/효과(키워드, 패시브)를 설계하세요. 밸런스는 기존 콘텐츠와 비슷하게 맞추세요.
+관리자의 요청에 따라 새 캐릭터/스킬/효과(키워드, 패시브)를 설계하세요.
+밸런스 기준 (기존 콘텐츠와 비슷하게, 관리자가 따로 요청하지 않으면 이 범위를 지키세요):
+- 체력 100~180, 속도 [2~5, 4~8], 공격 레벨 38~44, 방어 레벨 36~44, 흐트러짐 [0.6, 0.3] 근처
+- 스킬1(3장): 기본 3~5, 코인 2~4, 코인 2개 / 스킬2(2장): 기본 4~6, 코인 2~4, 코인 2~3개 / 스킬3(1장): 기본 5~8, 코인 3~6, 코인 2~3개
+- 최대 위력(기본+코인위력x코인수)은 25 이하. 수비/회피 스킬: 기본 5~8, 코인 2~4, 코인 1개
+- 내성은 0.5 / 1 / 1.5 를 섞어서 약점과 강점을 하나씩
+- 키워드 상태를 부여하는 스킬은 effects 에 {"when":"onHit","do":"inflict","status":"키워드 id",...} 로 실제 부여하세요.
 JSON 객체 하나만 출력합니다:
 {"summary": "만든 내용 요약(한국어)",
  "effects": [{"id":"ef_영문","kind":"keyword|passive","name":"","color":"#hex","desc":"","turnOnly":false,"hooks":{}}],
@@ -211,12 +275,16 @@ JSON 객체 하나만 출력합니다:
 기존 콘텐츠 id (재사용 가능): 캐릭터 ${library.characters.map((c) => c.id).join(', ')} / 스킬 ${library.skills.map((s) => s.id).join(', ')} / 효과 ${library.effects.map((e) => e.id).join(', ')}
 새로 만드는 id 는 기존 id 와 겹치지 않게 하세요.`;
   const messages = [...history, { role: 'user', content: request }];
-  const text = await callAI({ task: 'admin', system, messages, maxTokens: 32000 });
-  const bundle = extractJson(text);
-  const errors = [];
-  for (const e of bundle.effects || []) {
-    const errs = await validateWithSandbox(e);
-    if (errs.length) errors.push(`${e.id}: ${errs.join(', ')}`);
+  let text = await callAI({ system, messages, maxTokens: 32000 });
+  let bundle = extractJson(text);
+  let errors = await checkBundle(bundle, library);
+  if (errors.length) {
+    // one self-repair round
+    const repair = [...messages, { role: 'assistant', content: text },
+      { role: 'user', content: `검증 오류가 있습니다. 오류를 고친 전체 JSON 객체를 다시 출력하세요:\n${errors.join('\n')}` }];
+    text = await callAI({ system, messages: repair, maxTokens: 32000 });
+    bundle = extractJson(text);
+    errors = await checkBundle(bundle, library);
   }
   return { bundle, errors, raw: text };
 }

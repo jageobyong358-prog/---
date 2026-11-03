@@ -8,6 +8,8 @@ export const CONFIG = {
 
   // 사용할 모델 (worker/ai-proxy.js 의 ALLOWED_MODELS 중 하나)
   aiModel: 'minimaxai/minimax-m3.1-flash',
+  // 모델이 답하기 전에 '생각'하는 양: low(빠름) / medium / high
+  aiReasoning: 'low',
 
   // 관리자 코드의 SHA-256 해시. 관리자 탭에서 이 코드를 입력하면 관리자 기능이 켜집니다.
   // (코드 원문은 저장소에 두지 않습니다.)

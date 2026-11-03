@@ -120,7 +120,7 @@ function prefetchVfx(chars) {
   addLog(`✦ VFX AI가 ${todo.length}개 스킬의 연출을 생성합니다…`, 'sys');
   let active = 0; let i = 0;
   const run = () => {
-    while (active < 2 && i < todo.length) {
+    while (active < 1 && i < todo.length) {
       const sk = todo[i++]; active++;
       generateVfx({ skill: sk }).then(async (spec) => {
         vfxCache[sk.id] = spec; saveVfxCache();

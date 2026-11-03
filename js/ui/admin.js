@@ -55,7 +55,7 @@ export async function renderAdmin() {
       req.value = '';
       renderBundle(out, bundle, errors);
       renderChat();
-    }).catch((e) => toast(e.message, 'error')), 'AI가 콘텐츠를 만드는 중…');
+    }).catch((e) => toast(e.message, 'error')), 'AI가 콘텐츠를 만드는 중… (2~5분)');
   });
   renderChat();
 

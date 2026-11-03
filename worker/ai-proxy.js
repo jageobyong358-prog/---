@@ -6,7 +6,8 @@
 //         Settings > Variables and Secrets > add secret NVIDIA_API_KEY = nvapi-...
 const UPSTREAM = 'https://integrate.api.nvidia.com/v1/chat/completions';
 const ALLOWED_ORIGINS = ['https://jageobyong358-prog.github.io', 'http://localhost:8765', 'http://localhost:8080'];
-const ALLOWED_MODELS = ['minimaxai/minimax-m3.1-flash', 'deepseek-ai/deepseek-v4.1-flash', 'z-ai/glm-5.3-flash', 'openai/gpt-oss-20b'];
+const ALLOWED_MODELS = ['minimaxai/minimax-m3.1-flash', 'nvidia/nemotron-3-ultra-550b-a55b', 'deepseek-ai/deepseek-v4.1-flash', 'z-ai/glm-5.3-flash'];
+const EFFORTS = ['low', 'medium', 'high'];
 const MAX_TOKENS = 32000;
 
 function cors(origin) {
@@ -48,6 +49,9 @@ export default {
         messages,
         max_tokens: Math.min(Number(body.max_tokens) || 8000, MAX_TOKENS),
         temperature: 0.4,
+        // Stream so bytes flow immediately; a long silent wait gets cut by intermediaries (HTTP 524).
+        stream: true,
+        ...(EFFORTS.includes(body.reasoning_effort) ? { reasoning_effort: body.reasoning_effort } : {}),
       }),
       });
     } catch (err) {
