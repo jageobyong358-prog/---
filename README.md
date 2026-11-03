@@ -65,7 +65,7 @@ AI는 NVIDIA API(`integrate.api.nvidia.com`, OpenAI 호환)를 씁니다. NVIDIA
 - **`aiModel`**: 모델 (기본 `minimaxai/minimax-m3.1-flash`). `worker/ai-proxy.js` 의 `ALLOWED_MODELS` 안에서 고릅니다.
 - **`adminPasswordHash`**: 관리자 코드의 SHA-256 해시. 코드를 바꾸려면 `printf '새코드' | sha256sum` 결과로 교체하세요.
 
-중계 서버는 이 사이트 주소(`ALLOWED_ORIGINS`)에서 온 요청만 받고, 모델과 최대 토큰을 제한하며, 응답을 스트리밍으로 전달합니다. 걸리는 시간: 키워드·스킬 효과·VFX 10~30초, 관리자 콘텐츠 묶음 2~5분 (NVIDIA 무료 등급은 동시 요청이 몰리면 대기할 수 있음).
+중계 서버는 이 사이트 주소(`ALLOWED_ORIGINS`)에서 온 요청만 받고, 모델과 최대 토큰을 제한하며, 응답을 스트리밍으로 전달합니다. 걸리는 시간: 키워드·스킬 효과·VFX 보통 15~45초, 관리자 콘텐츠 묶음 2~5분. NVIDIA 무료 서버는 모델별로 대기열이 막히는 일이 잦아서, 20초 동안 응답이 없으면 `aiModels` 의 다음 모델로 자동 전환합니다. 중계 서버는 대기 중에도 연결 유지 신호를 보냅니다.
 
 ## 서버 구조
 

@@ -6,8 +6,9 @@ export const CONFIG = {
   // NVIDIA API 키는 이 중계 서버의 비밀 변수에만 보관하고, 이 파일(공개)에는 넣지 않습니다.
   aiProxyUrl: 'https://battle-sim-ai.kangjjang150407.workers.dev',
 
-  // 사용할 모델 (worker/ai-proxy.js 의 ALLOWED_MODELS 중 하나)
-  aiModel: 'minimaxai/minimax-m3.1-flash',
+  // 사용할 모델 목록 (worker/ai-proxy.js 의 ALLOWED_MODELS 안에서).
+  // NVIDIA 무료 서버는 모델별로 혼잡도가 달라서, 응답이 없으면 다음 모델로 자동 전환합니다.
+  aiModels: ['nvidia/nemotron-3-ultra-550b-a55b', 'minimaxai/minimax-m3.1-flash', 'deepseek-ai/deepseek-v4.1-flash'],
   // 모델이 답하기 전에 '생각'하는 양: low(빠름) / medium / high
   aiReasoning: 'low',
 

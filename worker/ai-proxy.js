@@ -20,8 +20,11 @@ function cors(origin) {
   };
 }
 
+const enc = new TextEncoder();
+const sse = (obj) => enc.encode(`data: ${JSON.stringify(obj)}\n\n`);
+
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const origin = request.headers.get('Origin') || '';
     const headers = cors(origin);
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers });
@@ -39,27 +42,56 @@ export default {
         return new Response('bad message', { status: 400, headers });
       }
     }
-    let upstream;
-    try {
-      upstream = await fetch(UPSTREAM, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${env.NVIDIA_API_KEY}`, 'content-type': 'application/json' },
-      body: JSON.stringify({
-        model,
-        messages,
-        max_tokens: Math.min(Number(body.max_tokens) || 8000, MAX_TOKENS),
-        temperature: 0.4,
-        // Stream so bytes flow immediately; a long silent wait gets cut by intermediaries (HTTP 524).
-        stream: true,
-        ...(EFFORTS.includes(body.reasoning_effort) ? { reasoning_effort: body.reasoning_effort } : {}),
-      }),
-      });
-    } catch (err) {
-      return new Response(JSON.stringify({ error: { message: `upstream unreachable: ${err.message}` } }), { status: 502, headers: { ...headers, 'content-type': 'application/json' } });
-    }
-    return new Response(upstream.body, {
-      status: upstream.status,
-      headers: { ...headers, 'content-type': upstream.headers.get('content-type') || 'application/json' },
-    });
+
+    // Answer at once with an event stream. While NVIDIA queues the request we send
+    // SSE comments (": ping") so nothing in between drops a silent connection;
+    // then the upstream stream is piped through. Upstream errors arrive as
+    // `data: {"error": {...}}` events.
+    const { readable, writable } = new TransformStream();
+    const writer = writable.getWriter();
+    const ping = () => writer.write(enc.encode(': ping\n\n')).catch(() => {});
+    ping();
+    let timer = setInterval(ping, 5000);
+    const stop = () => { if (timer) { clearInterval(timer); timer = null; } };
+
+    const work = (async () => {
+      try {
+        const upstream = await fetch(UPSTREAM, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${env.NVIDIA_API_KEY}`, 'content-type': 'application/json' },
+          body: JSON.stringify({
+            model,
+            messages,
+            max_tokens: Math.min(Number(body.max_tokens) || 8000, MAX_TOKENS),
+            temperature: 0.4,
+            stream: true,
+            ...(EFFORTS.includes(body.reasoning_effort) ? { reasoning_effort: body.reasoning_effort } : {}),
+          }),
+        });
+        if (!upstream.ok || !upstream.body) {
+          const text = await upstream.text();
+          let msg = text.slice(0, 300);
+          try { const j = JSON.parse(text); msg = j.detail || j.error?.message || j.title || msg; } catch { /* keep text */ }
+          stop();
+          await writer.write(sse({ error: { status: upstream.status, message: msg } }));
+          return;
+        }
+        const reader = upstream.body.getReader();
+        for (;;) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          stop(); // real data is flowing; no more pings (they could split an SSE line)
+          await writer.write(value);
+        }
+      } catch (err) {
+        stop();
+        await writer.write(sse({ error: { status: 502, message: `upstream unreachable: ${err.message}` } })).catch(() => {});
+      } finally {
+        stop();
+        await writer.close().catch(() => {});
+      }
+    })();
+    ctx.waitUntil(work);
+    return new Response(readable, { headers: { ...headers, 'content-type': 'text/event-stream', 'cache-control': 'no-cache' } });
   },
 };

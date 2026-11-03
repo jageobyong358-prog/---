@@ -5,7 +5,7 @@ import { h, toast, busy, area } from './dom.js';
 import { isAdmin, adminLogin, adminLogout } from '../store.js';
 import { currentServer } from '../config.js';
 import { lib, loadLibrary, saveTestItem, listTestItems, deleteTestItem, listLiveItems, liveFileText } from '../library.js';
-import { generateContent, aiAvailable } from '../ai.js';
+import { generateContent, aiAvailable, progressLabel } from '../ai.js';
 
 const history = []; // conversation with the content AI (this session)
 let lastBundle = null;
@@ -49,7 +49,7 @@ export async function renderAdmin() {
     const text = req.value.trim();
     if (!text) return;
     if (!aiAvailable()) return toast('AI 중계 서버가 설정되지 않아 AI를 사용할 수 없습니다.', 'error');
-    busy(sendBtn, generateContent({ request: text, library: lib, history }).then(({ bundle, errors, raw }) => {
+    busy(sendBtn, generateContent({ request: text, library: lib, history, onProgress: (pg) => { sendBtn.textContent = progressLabel(pg); } }).then(({ bundle, errors, raw }) => {
       history.push({ role: 'user', content: text }, { role: 'assistant', content: raw });
       lastBundle = bundle;
       req.value = '';

@@ -2,7 +2,7 @@
 import { h, toast, modal, busy, field, num, txt, area, sel } from './dom.js';
 import { lib, saveItem, deleteItem, newId, getSkill, getEffect, onLibChange } from '../library.js';
 import { imageToDataUrl } from '../store.js';
-import { generateEffect, generateSkillEffects, generateVfx, aiAvailable } from '../ai.js';
+import { generateEffect, generateSkillEffects, generateVfx, aiAvailable, progressLabel } from '../ai.js';
 import { playVfx, defaultVfx, shoutText, SIN_COLORS } from '../vfx.js';
 import { sandbox } from '../sandbox.js';
 
@@ -261,7 +261,7 @@ async function editSkill(orig) {
   aiEffBtn.addEventListener('click', () => {
     if (!aiAvailable()) return toast('AI 중계 서버가 설정되지 않아 AI를 사용할 수 없습니다.', 'error');
     const skill = { ...s, name: f.name.value, sin: f.sin.value, atkType: f.atk.value, basePower: +f.base.value, coinPower: +f.coin.value, coinCount: +f.cnt.value, desc: f.desc.value };
-    busy(aiEffBtn, generateSkillEffects({ skill, customEffects: lib.effects }).then(({ effects, errors }) => {
+    busy(aiEffBtn, generateSkillEffects({ skill, customEffects: lib.effects, onProgress: (pg) => { aiEffBtn.textContent = progressLabel(pg); } }).then(({ effects, errors }) => {
       f.effects.value = JSON.stringify(effects, null, 2);
       toast(errors.length ? `생성됨 (검증 경고: ${errors.join(', ')})` : 'AI가 스킬 효과를 구현했습니다.', errors.length ? 'error' : 'ok');
     }).catch((e) => toast(e.message, 'error')));
@@ -270,7 +270,7 @@ async function editSkill(orig) {
   aiVfxBtn.addEventListener('click', () => {
     if (!aiAvailable()) return toast('AI 중계 서버가 설정되지 않아 AI를 사용할 수 없습니다.', 'error');
     const skill = { ...s, name: f.name.value, sin: f.sin.value, atkType: f.atk.value, type: f.type.value, desc: f.desc.value };
-    busy(aiVfxBtn, generateVfx({ skill, prompt: f.vfxPrompt.value }).then((spec) => {
+    busy(aiVfxBtn, generateVfx({ skill, prompt: f.vfxPrompt.value, onProgress: (pg) => { aiVfxBtn.textContent = progressLabel(pg); } }).then((spec) => {
       f.vfx.value = JSON.stringify(spec, null, 2);
       playVfx(spec, null, 1);
     }).catch((e) => toast(e.message, 'error')));
@@ -342,7 +342,7 @@ async function editEffect(orig, preset = {}) {
   aiBtn.addEventListener('click', () => {
     if (!f.desc.value.trim()) return toast('효과 설명을 입력하세요.', 'error');
     if (!aiAvailable()) return toast('AI 중계 서버가 설정되지 않아 AI를 사용할 수 없습니다.', 'error');
-    busy(aiBtn, generateEffect({ kind: f.kind.value, name: f.name.value, description: f.desc.value, existing: lib.effects }).then(({ effect, errors }) => {
+    busy(aiBtn, generateEffect({ kind: f.kind.value, name: f.name.value, description: f.desc.value, existing: lib.effects, onProgress: (pg) => { aiBtn.textContent = progressLabel(pg); } }).then(({ effect, errors }) => {
       if (!f.name.value && effect.name) f.name.value = effect.name;
       if (effect.color) f.color.value = effect.color;
       e.turnOnly = !!effect.turnOnly;

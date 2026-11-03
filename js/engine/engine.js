@@ -329,9 +329,22 @@
     }
   }
 
+  /** Drop statuses whose count reached 0 (custom code often just does `ctx.status.count -= 1`). */
+  function purge(B, u) {
+    for (const [id, st] of Object.entries(u.statuses)) {
+      const def = effectDef(B, id);
+      if (def && def.turnOnly) continue;
+      if (!(st.count > 0) || (st.potency <= 0 && st.count <= 0)) delete u.statuses[id];
+    }
+  }
+
   /** Fire a hook for every status and passive on unit u. */
   function fire(B, hookName, u, base) {
     if (!u) return;
+    try { return fireInner(B, hookName, u, base); } finally { purge(B, u); }
+  }
+
+  function fireInner(B, hookName, u, base) {
     // statuses
     for (const id of Object.keys(u.statuses)) {
       const s = u.statuses[id];

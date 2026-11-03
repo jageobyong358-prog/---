@@ -8,62 +8,129 @@ import { sandbox } from './sandbox.js';
 
 export function aiAvailable() { return !!CONFIG.aiProxyUrl; }
 
-/** Low-level call. Streams the reply (server-sent events) and returns its text. */
+const FIRST_DATA_TIMEOUT = 20000; // NVIDIA free tier sometimes queues a request for minutes
+const STALL_TIMEOUT = 60000;
+
+/** Models to try, starting with the one that answered last time (busy models are skipped). */
+function modelOrder() {
+  const list = (CONFIG.aiModels && CONFIG.aiModels.length ? CONFIG.aiModels : [CONFIG.aiModel]).filter(Boolean);
+  let last = null;
+  try { last = sessionStorage.getItem('lbs.aiModel'); } catch { /* ignore */ }
+  return last && list.includes(last) ? [last, ...list.filter((m) => m !== last)] : list;
+}
+function rememberModel(m) { try { sessionStorage.setItem('lbs.aiModel', m); } catch { /* ignore */ } }
+
+class RetryableError extends Error {}
+
+/**
+ * Low-level call. Streams the reply (server-sent events) and returns its text.
+ * onProgress({ phase: 'wait' | 'think' | 'write' | 'retry', secs, chars, attempt })
+ */
 export async function callAI({ system, messages, maxTokens = 16000, onProgress }) {
   if (!CONFIG.aiProxyUrl) throw new Error('AI 중계 서버 주소(js/config.js 의 aiProxyUrl)가 설정되지 않았습니다.');
-  let r;
-  try {
-    r = await fetch(CONFIG.aiProxyUrl, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        model: CONFIG.aiModel,
-        reasoning_effort: CONFIG.aiReasoning || 'low',
-        max_tokens: maxTokens,
-        messages: [{ role: 'system', content: system }, ...messages],
-      }),
-    });
-  } catch {
-    throw new Error('AI 중계 서버에 연결하지 못했습니다. 잠시 후 다시 시도해 주세요.');
-  }
-  if (!r.ok) {
-    const text = await r.text();
-    let data = null; try { data = JSON.parse(text); } catch { /* not json */ }
-    if (r.status === 429) throw new Error('AI 요청이 너무 많습니다. 잠시 후 다시 시도해 주세요.');
-    if (r.status === 524 || r.status === 504) throw new Error('AI 응답이 너무 오래 걸려 끊겼습니다. 잠시 후 다시 시도해 주세요.');
-    throw new Error(`AI 오류 (${r.status}): ${data?.detail || data?.error?.message || data?.title || text.slice(0, 200)}`);
-  }
-  const reader = r.body.getReader();
-  const dec = new TextDecoder();
-  let buf = ''; let content = ''; let finish = null;
-  try {
-    for (;;) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buf += dec.decode(value, { stream: true });
-      let nl;
-      while ((nl = buf.indexOf('\n')) >= 0) {
-        const line = buf.slice(0, nl).trim(); buf = buf.slice(nl + 1);
-        if (!line.startsWith('data:')) continue;
-        const payload = line.slice(5).trim();
-        if (payload === '[DONE]') continue;
-        let j; try { j = JSON.parse(payload); } catch { continue; }
-        if (j.error) throw new Error(`AI 오류: ${j.error.message || JSON.stringify(j.error)}`);
-        const ch = j.choices && j.choices[0];
-        if (!ch) continue;
-        if (ch.delta && ch.delta.content) { content += ch.delta.content; if (onProgress) onProgress(content.length); }
-        if (ch.finish_reason) finish = ch.finish_reason;
-      }
+  const started = Date.now();
+  let lastErr = null;
+  const models = modelOrder();
+  for (let attempt = 1; attempt <= models.length; attempt++) {
+    const model = models[attempt - 1];
+    try {
+      const text = await attemptAI({ model, system, messages, maxTokens, onProgress, started, attempt });
+      rememberModel(model);
+      return text;
+    } catch (e) {
+      if (!(e instanceof RetryableError)) throw e;
+      lastErr = e;
+      if (onProgress) onProgress({ phase: 'retry', secs: Math.round((Date.now() - started) / 1000), chars: 0, attempt });
+      await new Promise((r) => setTimeout(r, 500));
     }
-  } catch (e) {
-    if (e.message.startsWith('AI 오류')) throw e;
-    throw new Error('AI 응답을 받는 중 연결이 끊겼습니다. 다시 시도해 주세요.');
   }
-  if (finish === 'length') throw new Error('AI 응답이 너무 길어 중간에 잘렸습니다. 요청을 나눠서 다시 시도해 주세요.');
-  // some models wrap reasoning in <think> tags inside the content
-  content = content.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
-  if (!content) throw new Error('AI 응답이 비어 있습니다. 다시 시도해 주세요.');
-  return content;
+  throw new Error(`${lastErr.message} AI 서버(NVIDIA 무료)가 혼잡합니다. 잠시 후 다시 시도해 주세요.`);
+}
+
+async function attemptAI({ model, system, messages, maxTokens, onProgress, started, attempt }) {
+  const ctrl = new AbortController();
+  const state = { phase: 'wait', chars: 0 };
+  let lastData = Date.now();
+  let timedOut = null;
+  const tick = setInterval(() => {
+    const now = Date.now();
+    if (state.phase === 'wait' && now - lastData > FIRST_DATA_TIMEOUT) { timedOut = '응답 대기 시간이 초과됐습니다.'; ctrl.abort(); }
+    else if (state.phase !== 'wait' && now - lastData > STALL_TIMEOUT) { timedOut = 'AI 응답이 멈췄습니다.'; ctrl.abort(); }
+    if (onProgress) onProgress({ phase: state.phase, secs: Math.round((now - started) / 1000), chars: state.chars, attempt });
+  }, 1000);
+  try {
+    let r;
+    try {
+      r = await fetch(CONFIG.aiProxyUrl, {
+        method: 'POST',
+        signal: ctrl.signal,
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          model,
+          reasoning_effort: CONFIG.aiReasoning || 'low',
+          max_tokens: maxTokens,
+          messages: [{ role: 'system', content: system }, ...messages],
+        }),
+      });
+    } catch {
+      if (timedOut) throw new RetryableError(timedOut);
+      throw new Error('AI 중계 서버에 연결하지 못했습니다. 인터넷 연결을 확인하고 다시 시도해 주세요.');
+    }
+    if (!r.ok) {
+      const text = await r.text();
+      if (r.status === 429 || r.status >= 500) throw new RetryableError(`AI 오류 (${r.status}).`);
+      throw new Error(`AI 오류 (${r.status}): ${text.slice(0, 200)}`);
+    }
+    const reader = r.body.getReader();
+    const dec = new TextDecoder();
+    let buf = ''; let content = ''; let finish = null;
+    try {
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        let nl;
+        while ((nl = buf.indexOf('\n')) >= 0) {
+          const line = buf.slice(0, nl).trim(); buf = buf.slice(nl + 1);
+          if (!line.startsWith('data:')) continue; // ": ping" keep-alives from the relay
+          const payload = line.slice(5).trim();
+          if (payload === '[DONE]') continue;
+          let j; try { j = JSON.parse(payload); } catch { continue; }
+          if (j.error) {
+            const st = j.error.status || 0;
+            if (st === 429 || st >= 500 || st === 0) throw new RetryableError(`AI 오류 (${st || '연결'}).`);
+            throw new Error(`AI 오류 (${st}): ${j.error.message || ''}`);
+          }
+          const ch = j.choices && j.choices[0];
+          if (!ch) continue;
+          lastData = Date.now();
+          const d = ch.delta || {};
+          if (d.content) { content += d.content; state.phase = 'write'; state.chars = content.length; } else if (state.phase === 'wait') state.phase = 'think';
+          if (ch.finish_reason) finish = ch.finish_reason;
+        }
+      }
+    } catch (e) {
+      if (e instanceof RetryableError || e.message.startsWith('AI 오류')) throw e;
+      if (timedOut) throw new RetryableError(timedOut);
+      throw new RetryableError('AI 응답을 받는 중 연결이 끊겼습니다.');
+    }
+    if (finish === 'length') throw new Error('AI 응답이 너무 길어 중간에 잘렸습니다. 요청을 나눠서 다시 시도해 주세요.');
+    // some models wrap reasoning in <think> tags inside the content
+    content = content.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+    if (!content) throw new RetryableError('AI 응답이 비어 있습니다.');
+    return content;
+  } finally {
+    clearInterval(tick);
+  }
+}
+
+/** Button label for a progress update. */
+export function progressLabel(p) {
+  const t = `${p.secs}초`;
+  if (p.phase === 'retry') return `서버 혼잡 — 다른 모델로 전환 중… ${t}`;
+  if (p.phase === 'wait') return `AI 서버 대기 중… ${t}`;
+  if (p.phase === 'think') return `AI가 구상 중… ${t}`;
+  return `AI가 작성 중… ${p.chars}자 · ${t}`;
 }
 
 /** Pull the first JSON object/array out of a model response. */
@@ -88,6 +155,7 @@ export function extractJson(text) {
 // Shared rules text given to the model
 // ---------------------------------------------------------------------------
 const RULES = `
+오래 고민하지 말고 핵심만 빠르게 판단해 바로 답하세요. 설명 없이 요청한 JSON만 출력합니다.
 당신은 웹 전투 시뮬레이터의 콘텐츠 엔지니어입니다. 전투 규칙은 림버스 컴퍼니와 동일합니다:
 - 스킬: 기본 위력(basePower) + 코인 위력(coinPower, 음수 가능) x 앞면 코인 수. 코인 개수(coinCount).
 - 코인 앞면 확률 = 50% + 정신력(SP, -45~45)%.
@@ -165,7 +233,7 @@ async function validateWithSandbox(effect) {
 }
 
 /** Natural language -> keyword / passive effect with working hook code. */
-export async function generateEffect({ kind, name, description, existing = [] }) {
+export async function generateEffect({ kind, name, description, existing = [], onProgress }) {
   const system = RULES + HOOK_DOC + `
 ## 출력
 아래 형식의 JSON 객체 하나만 출력하세요 (설명 문장 금지):
@@ -175,20 +243,20 @@ export async function generateEffect({ kind, name, description, existing = [] })
 - 수치는 정수로 반올림하세요. 무한 루프 금지.
 - 이미 존재하는 커스텀 효과 id: ${existing.map((e) => `${e.id}(${e.name})`).join(', ') || '없음'}`;
   const messages = [{ role: 'user', content: `종류: ${kind === 'keyword' ? '키워드(상태이상)' : '패시브'}\n이름: ${name || '(AI가 정해 주세요)'}\n효과 설명: ${description}` }];
-  let effect = extractJson(await callAI({ system, messages }));
+  let effect = extractJson(await callAI({ system, messages, maxTokens: 8000, onProgress }));
   let errors = await validateWithSandbox(effect);
   if (errors.length) {
     // one self-repair round
     messages.push({ role: 'assistant', content: JSON.stringify(effect) });
     messages.push({ role: 'user', content: `코드 검증 오류가 있습니다. 수정한 전체 JSON을 다시 출력하세요:\n${errors.join('\n')}` });
-    effect = extractJson(await callAI({ system, messages }));
+    effect = extractJson(await callAI({ system, messages, maxTokens: 8000, onProgress }));
     errors = await validateWithSandbox(effect);
   }
   return { effect, errors };
 }
 
 /** Skill text -> data-driven effects list. */
-export async function generateSkillEffects({ skill, customEffects = [] }) {
+export async function generateSkillEffects({ skill, customEffects = [], onProgress }) {
   const system = RULES + HOOK_DOC + `
 ## 스킬 효과 형식
 스킬 효과 설명을 아래 effects 배열로 변환하세요. JSON 배열 하나만 출력합니다.
@@ -204,7 +272,7 @@ export async function generateSkillEffects({ skill, customEffects = [] }) {
 - "script": code (위 효과 코드 API의 JS 본문, ctx.self=사용자, ctx.target=대상. 단순 동작으로 표현할 수 없는 조건부 효과에 사용)
 사용 가능한 커스텀 키워드 id: ${customEffects.filter((e) => e.kind === 'keyword').map((e) => `${e.id}(${e.name})`).join(', ') || '없음'}`;
   const messages = [{ role: 'user', content: `스킬: ${skill.name} (죄악 ${skill.sin}, ${skill.atkType}, 위력 ${skill.basePower}+${skill.coinPower}x${skill.coinCount})\n효과 설명: ${skill.desc}` }];
-  const effects = extractJson(await callAI({ system, messages }));
+  const effects = extractJson(await callAI({ system, messages, maxTokens: 8000, onProgress }));
   const list = Array.isArray(effects) ? effects : [];
   const scriptErrors = [];
   for (const e of list.filter((x) => x.do === 'script')) {
@@ -214,12 +282,12 @@ export async function generateSkillEffects({ skill, customEffects = [] }) {
 }
 
 /** Skill -> VFX spec. */
-export async function generateVfx({ skill, prompt }) {
+export async function generateVfx({ skill, prompt, onProgress }) {
   const system = RULES + VFX_DOC + `
 ## 출력
 스킬 연출에 어울리는 화려한 VFX JSON 객체 하나만 출력하세요. 죄악 속성 색과 공격 유형(참격=베기 궤적, 관통=빔/찌르기, 타격=충격파/파편)을 반영하세요. 레이어는 3~7개.`;
   const messages = [{ role: 'user', content: `스킬: ${skill.name}\n죄악: ${skill.sin}\n공격 유형: ${skill.atkType}\n스킬 유형: ${skill.type}\n설명: ${skill.desc || ''}\n추가 요청: ${prompt || '없음'}` }];
-  return extractJson(await callAI({ system, messages, maxTokens: 4000 }));
+  return extractJson(await callAI({ system, messages, maxTokens: 4000, onProgress }));
 }
 
 const SKILL_OPS = ['inflict', 'gainSP', 'heal', 'damage', 'tremorBurst', 'power', 'damagePct', 'script'];
@@ -252,7 +320,7 @@ async function checkBundle(bundle, library) {
 }
 
 /** Admin: natural-language request -> bundle of new content. */
-export async function generateContent({ request, library, history = [] }) {
+export async function generateContent({ request, library, history = [], onProgress }) {
   const system = RULES + HOOK_DOC + VFX_DOC + `
 ## 관리자 콘텐츠 제작
 관리자의 요청에 따라 새 캐릭터/스킬/효과(키워드, 패시브)를 설계하세요.
@@ -275,14 +343,14 @@ JSON 객체 하나만 출력합니다:
 기존 콘텐츠 id (재사용 가능): 캐릭터 ${library.characters.map((c) => c.id).join(', ')} / 스킬 ${library.skills.map((s) => s.id).join(', ')} / 효과 ${library.effects.map((e) => e.id).join(', ')}
 새로 만드는 id 는 기존 id 와 겹치지 않게 하세요.`;
   const messages = [...history, { role: 'user', content: request }];
-  let text = await callAI({ system, messages, maxTokens: 32000 });
+  let text = await callAI({ system, messages, maxTokens: 32000, onProgress });
   let bundle = extractJson(text);
   let errors = await checkBundle(bundle, library);
   if (errors.length) {
     // one self-repair round
     const repair = [...messages, { role: 'assistant', content: text },
       { role: 'user', content: `검증 오류가 있습니다. 오류를 고친 전체 JSON 객체를 다시 출력하세요:\n${errors.join('\n')}` }];
-    text = await callAI({ system, messages: repair, maxTokens: 32000 });
+    text = await callAI({ system, messages: repair, maxTokens: 32000, onProgress });
     bundle = extractJson(text);
     errors = await checkBundle(bundle, library);
   }

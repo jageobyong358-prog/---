@@ -36,7 +36,7 @@ function renderSettings() {
   document.getElementById('tab-settings').replaceChildren(h('div', { class: 'panel' },
     h('h2', {}, '설정'),
     h('h3', {}, 'AI'),
-    h('p', { class: CONFIG.aiProxyUrl ? '' : 'hint' }, CONFIG.aiProxyUrl ? `✓ AI 사용 가능 (모델: ${CONFIG.aiModel})` : 'AI 중계 서버가 아직 설정되지 않아 AI 기능을 사용할 수 없습니다.'),
+    h('p', { class: CONFIG.aiProxyUrl ? '' : 'hint' }, CONFIG.aiProxyUrl ? `✓ AI 사용 가능 (모델: ${(CONFIG.aiModels || [CONFIG.aiModel]).join(', ')} — 혼잡하면 자동 전환)` : 'AI 중계 서버가 아직 설정되지 않아 AI 기능을 사용할 수 없습니다.'),
     h('label', { class: 'check' }, autoVfx, ' 전투 시작 시 VFX가 없는 스킬은 VFX AI가 자동 생성'),
     h('div', { class: 'row' }, h('button', { class: 'btn primary', onclick: () => {
       settings.set({ autoVfx: autoVfx.checked });
