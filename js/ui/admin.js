@@ -115,7 +115,7 @@ async function testList() {
   let items = [];
   try { items = await listTestItems(); } catch (e) { return h('div', { class: 'panel' }, `테스트 서버 목록을 불러오지 못했습니다: ${e.message}`); }
   const rows = items.length ? items.map((it) => h('div', { class: 'server-row' },
-    h('span', { class: 'badge' }, KIND_LABEL[it.kind] || it.kind), ` ${it.name} `, h('code', {}, it.id),
+    h('span', { class: 'badge' }, KIND_LABEL[it.cat || it.kind] || it.cat || it.kind), ` ${it.name} `, h('code', {}, it.id),
     h('span', { class: 'spacer' }),
     h('button', { class: 'btn small primary', onclick: () => { publish(it); toast(`${it.name}: 라이브 배포 목록에 추가 (아래에서 파일 내보내기)`, 'ok'); renderAdmin(); } }, '라이브 배포'),
     h('button', { class: 'btn small', onclick: async () => { if (!confirm(`테스트 서버에서 ${it.name} 을(를) 삭제할까요?`)) return; await deleteTestItem(it.id); await loadLibrary(); renderAdmin(); } }, '삭제'))) : [h('p', { class: 'hint' }, '아직 콘텐츠가 없습니다.')];
@@ -139,6 +139,6 @@ function liveList() {
         } }, 'live.json 내보내기'))),
     h('p', { class: 'hint' }, '정적 사이트라 라이브 반영은 파일로 합니다: 내보낸 live.json 을 저장소의 content/live.json 에 덮어쓰고 커밋·배포하면 모든 사용자에게 적용됩니다.'),
     live.length ? live.map((it) => h('div', { class: 'server-row' },
-      h('span', { class: 'badge' }, KIND_LABEL[it.kind] || it.kind), ` ${it.name} `, h('code', {}, it.id), h('span', { class: 'spacer' }),
+      h('span', { class: 'badge' }, KIND_LABEL[it.cat || it.kind] || it.cat || it.kind), ` ${it.name} `, h('code', {}, it.id), h('span', { class: 'spacer' }),
       h('button', { class: 'btn small', onclick: () => { pendingLive = live.filter((x) => x.id !== it.id); renderAdmin(); } }, '라이브에서 제외'))) : h('p', { class: 'hint' }, '라이브 콘텐츠가 없습니다 (기본 콘텐츠만 사용 중).'));
 }

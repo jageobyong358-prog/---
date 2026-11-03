@@ -178,6 +178,10 @@ function renderUnit(u) {
   h('div', { class: 'speed-die', title: '속도' }, u.dead ? '✝' : u.staggered ? '—' : u.speed),
   portrait(c, 'portrait unit-img'),
   h('div', { class: 'unit-name' }, h('small', {}, c.title || ''), ' ', u.name),
+  (c.passives || []).length ? h('div', { class: 'passives' }, c.passives.map((pid) => {
+    const pv = lib.effects.find((e) => e.id === pid);
+    return pv ? h('span', { class: 'passive-chip', style: { '--c': pv.color || '#ffb347' }, title: pv.desc || '' }, '◆ ', pv.name) : null;
+  })) : null,
   h('div', { class: 'hpbar' }, h('div', { class: 'hpfill', style: { width: `${hpPct}%` } }), marks, h('span', { class: 'hptext' }, `${u.hp} / ${u.maxHp}`)),
   h('div', { class: 'spbar', title: '정신력' }, h('div', { class: `spfill ${u.sp < 0 ? 'neg' : ''}`, style: { width: `${Math.abs(u.sp) / 45 * 50}%`, left: u.sp < 0 ? `${50 - Math.abs(u.sp) / 45 * 50}%` : '50%' } }), h('span', { class: 'sptext' }, `SP ${u.sp}`)),
   h('div', { class: 'statuses' }, Object.entries(u.statuses).map(([id, s]) => statusChip(id, s.potency, s.count))),

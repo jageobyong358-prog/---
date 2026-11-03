@@ -1,6 +1,6 @@
 // Character / Skill / Keyword-Passive editors.
 import { h, toast, modal, busy, field, num, txt, area, sel } from './dom.js';
-import { lib, saveItem, deleteItem, newId, getSkill, onLibChange } from '../library.js';
+import { lib, saveItem, deleteItem, newId, getSkill, getEffect, onLibChange } from '../library.js';
 import { imageToDataUrl } from '../store.js';
 import { generateEffect, generateSkillEffects, generateVfx, aiAvailable } from '../ai.js';
 import { playVfx, defaultVfx, shoutText, SIN_COLORS } from '../vfx.js';
@@ -54,6 +54,11 @@ function messagesEditor(list) {
   };
   render();
   return box;
+}
+
+// An effect without code does nothing in battle: allow saving, but tell the user.
+function warnEmpty() {
+  toast('구현 코드가 비어 있어 전투에서는 아무 효과가 없습니다. 「✦ AI로 구현」을 눌러 구현하세요.', 'error', 5000);
 }
 
 /** Modal buttons: edit in place (overrides built-in/server items on this device), save as copy, delete/revert. */
@@ -119,18 +124,30 @@ function renderSkillList(root) {
         sourceBadge(s))))));
 }
 
+function effectCard(e) {
+  return h('button', { class: 'item-card', onclick: () => editEffect(e) },
+    h('div', { class: 'portrait placeholder small', style: { '--c': e.color || '#888' } }, (e.name || '?')[0]),
+    h('div', { class: 'item-info' },
+      h('div', { class: 'item-title' }, e.name, h('code', {}, ` ${e.id}`)),
+      h('div', { class: 'item-sub' }, e.desc || ''),
+      sourceBadge(e),
+      e.kind === 'passive' ? h('span', { class: 'badge' }, `${lib.characters.filter((c) => (c.passives || []).includes(e.id)).length}명 사용`) : null));
+}
+
 function renderEffectList(root) {
+  const passives = lib.effects.filter((e) => e.kind === 'passive');
+  const keywords = lib.effects.filter((e) => e.kind !== 'passive');
   const builtins = (sandbox.builtins || []).map((b) => h('div', { class: 'item-card static' },
     h('div', { class: 'portrait placeholder small', style: { '--c': b.color } }, b.name[0]),
     h('div', { class: 'item-info' }, h('div', { class: 'item-title' }, b.name, h('code', {}, ` ${b.id}`)), h('div', { class: 'item-sub' }, b.desc), h('span', { class: 'badge src-builtin' }, '내장 키워드'))));
   root.replaceChildren(
-    ...listShell('키워드 · 패시브 (AI 구현)', () => editEffect(null), lib.effects.map((e) =>
-      h('button', { class: 'item-card', onclick: () => editEffect(e) },
-        h('div', { class: 'portrait placeholder small', style: { '--c': e.color || '#888' } }, (e.name || '?')[0]),
-        h('div', { class: 'item-info' },
-          h('div', { class: 'item-title' }, e.name, h('code', {}, ` ${e.id}`)),
-          h('div', { class: 'item-sub' }, `${e.kind === 'keyword' ? '키워드' : '패시브'} · ${e.desc || ''}`),
-          sourceBadge(e))))),
+    h('div', { class: 'list-head' }, h('h2', {}, '패시브 (AI 구현)'),
+      h('button', { class: 'btn primary', onclick: () => editEffect(null, { kind: 'passive', color: '#ffb347' }) }, '+ 새 패시브')),
+    h('p', { class: 'hint' }, '패시브는 캐릭터에 붙는 상시 효과입니다. 만든 뒤 캐릭터 편집 화면의 「패시브」에서 선택하세요.'),
+    h('div', { class: 'card-grid' }, passives.length ? passives.map(effectCard) : h('p', { class: 'hint' }, '아직 패시브가 없습니다.')),
+    h('div', { class: 'list-head sub-head' }, h('h2', {}, '키워드 (AI 구현)'),
+      h('button', { class: 'btn primary', onclick: () => editEffect(null, { kind: 'keyword' }) }, '+ 새 키워드')),
+    h('div', { class: 'card-grid' }, keywords.length ? keywords.map(effectCard) : h('p', { class: 'hint' }, '아직 커스텀 키워드가 없습니다.')),
     h('h3', { class: 'sub-head' }, '내장 키워드'),
     h('div', { class: 'card-grid' }, builtins));
 }
@@ -167,11 +184,22 @@ async function editCharacter(orig) {
   renderSkills();
 
   const defSel = sel([['', '없음'], ...lib.skills.filter((s) => s.type !== 'attack').map((s) => [s.id, `${s.name} (${TYPE_LIST.find((t) => t[0] === s.type)?.[1]})`])], c.defense || '');
-  const passiveBox = h('div', { class: 'check-list' }, lib.effects.filter((e) => e.kind === 'passive').map((e) => {
-    const cb = h('input', { type: 'checkbox', checked: c.passives.includes(e.id) });
-    cb.addEventListener('change', () => { c.passives = cb.checked ? [...new Set([...c.passives, e.id])] : c.passives.filter((x) => x !== e.id); });
-    return h('label', { class: 'check' }, cb, ` ${e.name}`, h('small', {}, ` — ${e.desc || ''}`));
-  }));
+  c.passives = c.passives || [];
+  const passiveBox = h('div', { class: 'passive-box' });
+  const renderPassives = () => passiveBox.replaceChildren(
+    h('div', { class: 'check-list' }, lib.effects.filter((e) => e.kind === 'passive').length ? lib.effects.filter((e) => e.kind === 'passive').map((e) => {
+      const cb = h('input', { type: 'checkbox', checked: c.passives.includes(e.id) });
+      cb.addEventListener('change', () => { c.passives = cb.checked ? [...new Set([...c.passives, e.id])] : c.passives.filter((x) => x !== e.id); });
+      return h('div', { class: 'check-row' },
+        h('label', { class: 'check' }, cb, ` ${e.name}`, h('small', {}, ` — ${e.desc || ''}`)),
+        h('button', { class: 'btn small', type: 'button', onclick: async () => { await editEffect(getEffect(e.id) || e); renderPassives(); } }, '✎'));
+    }) : h('p', { class: 'hint' }, '아직 패시브가 없습니다. 아래 버튼으로 만들어 보세요.')),
+    h('button', { class: 'btn ai small', type: 'button', onclick: async () => {
+      const saved = await editEffect(null, { kind: 'passive', color: '#ffb347' });
+      if (saved && saved.kind === 'passive') { c.passives = [...new Set([...c.passives, saved.id])]; toast(`「${saved.name}」을(를) 이 캐릭터에 붙였습니다. 캐릭터도 저장하세요.`, 'ok'); }
+      renderPassives();
+    } }, '+ 새 패시브 만들어 붙이기'));
+  renderPassives();
 
   const body = h('div', { class: 'editor' },
     overrideNote(orig),
@@ -287,15 +315,29 @@ async function editSkill(orig) {
 // ---------------------------------------------------------------------------
 // Keyword / Passive editor (AI implements the behaviour)
 // ---------------------------------------------------------------------------
-async function editEffect(orig) {
-  const e = structuredClone(orig || { id: newId('ef'), kind: 'keyword', name: '', color: '#ff5577', desc: '', turnOnly: false, hooks: {} });
+const DESC_HINT = {
+  keyword: '예: 턴 종료 시 위력만큼 피해를 받고, 이 피해로 흐트러지면 다음 턴 속박 2를 얻는다. 횟수 1 감소.',
+  passive: '예: 합에서 이기면 정신력 +5. 체력이 50% 이하이면 모든 스킬 위력 +2. 적을 처치하면 다음 턴 신속 2.',
+};
+
+/** Keyword / passive editor. preset: initial fields for a new item. Resolves with the saved item or null. */
+async function editEffect(orig, preset = {}) {
+  const e = structuredClone(orig || { id: newId(preset.kind === 'passive' ? 'pv' : 'ef'), kind: 'keyword', name: '', color: '#ff5577', desc: '', turnOnly: false, hooks: {}, ...preset });
   const f = {
     kind: sel([['keyword', '키워드 (상태이상)'], ['passive', '패시브']], e.kind), name: txt(e.name, '이름'),
     color: h('input', { type: 'color', value: e.color || '#ff5577', class: 'color-inp' }),
-    desc: area(e.desc, 4, '예: 턴 종료 시 위력만큼 피해를 받고, 이 피해로 흐트러지면 다음 턴 속박 2를 얻는다. 횟수 1 감소.'),
+    desc: area(e.desc, 4, DESC_HINT[e.kind] || DESC_HINT.keyword),
     hooks: area(JSON.stringify(e.hooks || {}, null, 2), 12),
   };
-  const status = h('div', { class: 'hint' }, `ID: ${e.id}  (스킬 효과에서 status 로 이 ID를 사용)`);
+  const status = h('div', { class: 'hint' });
+  const syncKind = () => {
+    f.desc.placeholder = DESC_HINT[f.kind.value];
+    status.textContent = f.kind.value === 'passive'
+      ? `ID: ${e.id}  (캐릭터 편집 화면의 패시브 목록에서 선택해 붙입니다)`
+      : `ID: ${e.id}  (스킬 효과에서 status 로 이 ID를 사용)`;
+  };
+  f.kind.addEventListener('change', syncKind);
+  syncKind();
   const aiBtn = h('button', { class: 'btn ai', type: 'button' }, '✦ AI로 구현');
   aiBtn.addEventListener('click', () => {
     if (!f.desc.value.trim()) return toast('효과 설명을 입력하세요.', 'error');
@@ -323,17 +365,18 @@ async function editEffect(orig) {
     h('div', { class: 'row' }, aiBtn, checkBtn), status,
     field('구현 코드 (훅 → JS 본문)', f.hooks, '고급: 직접 수정할 수 있습니다. 코드는 격리된 샌드박스에서만 실행됩니다.'));
   const actions = editActions(orig);
-  const r = await modal(orig ? `효과 편집 — ${orig.name}` : '새 키워드 / 패시브', body, actions);
-  if (r === 'delete') { await deleteItem('effect', e.id); toast(orig.base ? '원래대로 되돌렸습니다.' : '삭제했습니다.'); return; }
-  if (r !== 'save' && r !== 'copy') return;
+  const r = await modal(orig ? `${orig.kind === 'passive' ? '패시브' : '키워드'} 편집 — ${orig.name}` : (e.kind === 'passive' ? '새 패시브' : '새 키워드'), body, actions);
+  if (r === 'delete') { await deleteItem('effect', e.id); toast(orig.base ? '원래대로 되돌렸습니다.' : '삭제했습니다.'); return null; }
+  if (r !== 'save' && r !== 'copy') return null;
   const asCopy = r === 'copy';
   let hooks;
-  try { hooks = JSON.parse(f.hooks.value || '{}'); } catch (err) { toast(`JSON 오류: ${err.message}`, 'error'); return; }
+  try { hooks = JSON.parse(f.hooks.value || '{}'); } catch (err) { toast(`JSON 오류: ${err.message}`, 'error'); return null; }
   const errs = await sandbox.call('validate', { hooks });
-  if (errs.length) { toast(`코드 오류로 저장하지 않았습니다: ${errs.join(' / ')}`, 'error', 6000); return; }
+  if (errs.length) { toast(`코드 오류로 저장하지 않았습니다: ${errs.join(' / ')}`, 'error', 6000); return null; }
+  if (!Object.keys(hooks).length) warnEmpty();
   Object.assign(e, { kind: f.kind.value, name: f.name.value.trim() || '이름 없음', color: f.color.value, desc: f.desc.value.trim(), hooks });
   if (asCopy) asNewCopy(e, orig, 'ef');
-  try { await saveItem('effect', e); toast('저장했습니다.', 'ok'); } catch (err) { toast(`저장 실패: ${err.message}`, 'error'); }
+  try { const saved = await saveItem('effect', e); toast('저장했습니다.', 'ok'); return saved; } catch (err) { toast(`저장 실패: ${err.message}`, 'error'); return null; }
 }
 
 export { editCharacter, editSkill, editEffect, getSkill };

@@ -11,9 +11,20 @@ const listeners = new Set();
 export function onLibChange(fn) { listeners.add(fn); return () => listeners.delete(fn); }
 function emit() { for (const fn of listeners) fn(lib); }
 
+// Stored items carry `cat` (character | skill | effect). Effects also have their own
+// `kind` (keyword | passive). Older saves put the category into `kind`, which wiped
+// the effect kind; catOf/normalize read both shapes.
+function catOf(item) {
+  if (KINDS[item.cat]) return item.cat;
+  if (KINDS[item.kind]) return item.kind;
+  return null;
+}
+
 function put(map, item, source) {
-  const k = KINDS[item.kind];
+  const cat = catOf(item);
+  const k = KINDS[cat];
   if (!k) return;
+  item = { ...item, cat };
   const prev = map[k].get(item.id);
   // base: the layer this item overrides (e.g. a built-in skill the player renamed)
   const base = prev ? (prev.source === 'user' ? prev.base : prev.source) : undefined;
@@ -22,9 +33,9 @@ function put(map, item, source) {
 
 export async function loadLibrary() {
   const map = { characters: new Map(), skills: new Map(), effects: new Map() };
-  for (const c of DEFAULT_CHARACTERS) put(map, { ...c, kind: 'character' }, 'builtin');
-  for (const s of DEFAULT_SKILLS) put(map, { ...s, kind: 'skill' }, 'builtin');
-  for (const e of DEFAULT_EFFECTS) put(map, { ...e, kind: 'effect' }, 'builtin');
+  for (const c of DEFAULT_CHARACTERS) put(map, { ...c, cat: 'character' }, 'builtin');
+  for (const s of DEFAULT_SKILLS) put(map, { ...s, cat: 'skill' }, 'builtin');
+  for (const e of DEFAULT_EFFECTS) put(map, { ...e, cat: 'effect' }, 'builtin');
   const errors = [];
   const safe = async (p) => { try { return await p; } catch (e) { errors.push(e.message); return []; } };
   liveItems = await safe(loadLiveContent());
@@ -34,6 +45,11 @@ export async function loadLibrary() {
   lib.characters = [...map.characters.values()];
   lib.skills = [...map.skills.values()];
   lib.effects = [...map.effects.values()];
+  // repair effects saved by older versions (kind was overwritten with 'effect')
+  const usedAsPassive = new Set(lib.characters.flatMap((c) => c.passives || []));
+  for (const e of lib.effects) {
+    if (e.kind !== 'keyword' && e.kind !== 'passive') e.kind = usedAsPassive.has(e.id) || /^pv_/.test(e.id) ? 'passive' : 'keyword';
+  }
   emit();
   return errors;
 }
@@ -49,10 +65,18 @@ function strip(item) {
   return o;
 }
 
-export async function saveItem(kind, item) {
-  const it = strip({ ...item, kind, updatedAt: Date.now() });
+function stored(cat, item) {
+  const it = strip({ ...item, cat, updatedAt: Date.now() });
+  if (cat !== 'effect' || (it.kind !== 'keyword' && it.kind !== 'passive')) {
+    if (cat === 'effect') it.kind = 'keyword'; else delete it.kind;
+  }
+  return it;
+}
+
+export async function saveItem(cat, item) {
+  const it = stored(cat, item);
   await userStore().save(it);
-  const arr = lib[KINDS[kind]];
+  const arr = lib[KINDS[cat]];
   const i = arr.findIndex((x) => x.id === it.id);
   const prev = arr[i];
   const withSrc = { ...it, source: 'user', base: prev ? (prev.source === 'user' ? prev.base : prev.source) : undefined };
@@ -67,8 +91,8 @@ export async function deleteItem(kind, id) {
 }
 
 // ----- test server (admin device) / live file ---------------------------------
-export async function saveTestItem(kind, item) {
-  const it = strip({ ...item, kind, updatedAt: Date.now() });
+export async function saveTestItem(cat, item) {
+  const it = stored(cat, item);
   await testStore().save(it);
   return it;
 }
@@ -78,7 +102,7 @@ export const listLiveItems = () => liveItems.slice();
 
 /** Build the content/live.json file text from a list of items. */
 export function liveFileText(items) {
-  const clean = items.map(strip).sort((a, b) => (a.kind + a.id).localeCompare(b.kind + b.id));
+  const clean = items.map(strip).sort((a, b) => (catOf(a) + a.id).localeCompare(catOf(b) + b.id));
   return `${JSON.stringify({ version: 1, updatedAt: new Date().toISOString(), items: clean }, null, 2)}\n`;
 }
 
