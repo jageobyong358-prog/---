@@ -142,7 +142,7 @@ function frame() {
         break;
       case 'glyph':
         ctx.globalCompositeOperation = 'source-over';
-        ctx.font = `900 ${p.size * (1 + t * 0.3)}px "Black Han Sans", sans-serif`;
+        ctx.font = `900 ${p.size * (1 + t * 0.3)}px system-ui, -apple-system, "Segoe UI", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif`;
         ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
         ctx.shadowColor = p.c; ctx.shadowBlur = 30;
         ctx.fillText(p.text, p.x + rnd(-3, 3), p.y - t * 30 + rnd(-3, 3));

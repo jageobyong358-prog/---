@@ -26,7 +26,7 @@ function renderHeader() {
   const server = currentServer();
   document.getElementById('header-right').replaceChildren(
     h('span', { class: `server-badge ${server}` }, server === 'test' ? 'TEST SERVER' : 'LIVE'),
-    isAdmin() ? h('span', { class: 'badge admin' }, 'ADMIN') : null,
+    ...(isAdmin() ? [h('span', { class: 'badge admin' }, 'ADMIN')] : []),
     h('span', { class: 'user' }, '이 기기에 저장'));
 }
 

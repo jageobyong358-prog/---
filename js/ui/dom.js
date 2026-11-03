@@ -1,4 +1,11 @@
 // Tiny DOM helpers.
+
+// replaceChildren()/append() turn null into the text "null"; the UI code passes
+// optional children as `cond ? el : null`, so skip empty values everywhere.
+for (const name of ['replaceChildren', 'append']) {
+  const orig = Element.prototype[name];
+  Element.prototype[name] = function (...nodes) { return orig.apply(this, nodes.filter((n) => n != null && n !== false)); };
+}
 export function h(tag, attrs, ...children) {
   const el = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs || {})) {
