@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>합 전투 시뮬레이터</title>
+  <meta name="description" content="림버스 컴퍼니식 합·코인·죄악 속성 전투 시뮬레이터. AI로 키워드/패시브/VFX를 구현합니다.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Black+Han+Sans&family=Noto+Sans+KR:wght@400;700;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <header class="top">
+    <div class="logo"><span class="logo-mark">合</span> 합 전투 시뮬레이터</div>
+    <nav id="tabs" class="tabs"></nav>
+    <div id="header-right" class="header-right"></div>
+  </header>
+
+  <main>
+    <section id="tab-battle" class="tab"></section>
+    <section id="tab-characters" class="tab" hidden></section>
+    <section id="tab-skills" class="tab" hidden></section>
+    <section id="tab-effects" class="tab" hidden></section>
+    <section id="tab-settings" class="tab" hidden></section>
+    <section id="tab-admin" class="tab" hidden></section>
+  </main>
+
+  <div id="fx-text-layer"></div>
+  <div id="toasts"></div>
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
