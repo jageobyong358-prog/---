@@ -4,7 +4,7 @@
 export const CONFIG = {
   // AI 중계 서버(worker/ai-proxy.js 를 배포한 Cloudflare Worker) 주소.
   // NVIDIA API 키는 이 중계 서버의 비밀 변수에만 보관하고, 이 파일(공개)에는 넣지 않습니다.
-  aiProxyUrl: '',
+  aiProxyUrl: 'https://battle-sim-ai.kangjjang150407.workers.dev',
 
   // 사용할 모델 (worker/ai-proxy.js 의 ALLOWED_MODELS 중 하나)
   aiModel: 'minimaxai/minimax-m3.1-flash',

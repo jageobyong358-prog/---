@@ -51,6 +51,10 @@ python3 -m http.server 8080   # 아무 정적 서버
 AI는 NVIDIA API(`integrate.api.nvidia.com`, OpenAI 호환)를 씁니다. NVIDIA API는 웹페이지에서 직접 호출하는 것을 막아 두었기 때문에(CORS),
 키를 보관하고 대신 호출해 주는 **Cloudflare Worker 중계 서버**(`worker/ai-proxy.js`, 무료)를 거칩니다. 키는 공개 저장소에 들어가지 않습니다.
 
+현재 배포: `https://battle-sim-ai.kangjjang150407.workers.dev` (Worker 이름 `battle-sim-ai`). `worker/ai-proxy.js` 를 고친 뒤에는 Cloudflare 대시보드의 Worker 편집 화면에 다시 붙여 넣고 Deploy 하세요.
+
+처음부터 다시 만들 때:
+
 1. https://dash.cloudflare.com 가입 → **Workers & Pages → Create → Create Worker** → 이름 정하고 **Deploy**
 2. **Edit code** 에서 기본 코드를 모두 지우고 `worker/ai-proxy.js` 내용을 붙여 넣은 뒤 **Deploy**
 3. Worker의 **Settings → Variables and Secrets → Add** → Type `Secret`, 이름 `NVIDIA_API_KEY`, 값 `nvapi-…` → **Deploy**
