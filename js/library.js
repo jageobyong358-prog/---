@@ -14,7 +14,10 @@ function emit() { for (const fn of listeners) fn(lib); }
 function put(map, item, source) {
   const k = KINDS[item.kind];
   if (!k) return;
-  map[k].set(item.id, Object.assign({}, item, { source }));
+  const prev = map[k].get(item.id);
+  // base: the layer this item overrides (e.g. a built-in skill the player renamed)
+  const base = prev ? (prev.source === 'user' ? prev.base : prev.source) : undefined;
+  map[k].set(item.id, Object.assign({}, item, { source, base }));
 }
 
 export async function loadLibrary() {
@@ -42,6 +45,7 @@ export const getEffect = (id) => lib.effects.find((e) => e.id === id);
 function strip(item) {
   const o = { ...item };
   delete o.source;
+  delete o.base;
   return o;
 }
 
@@ -50,7 +54,8 @@ export async function saveItem(kind, item) {
   await userStore().save(it);
   const arr = lib[KINDS[kind]];
   const i = arr.findIndex((x) => x.id === it.id);
-  const withSrc = { ...it, source: 'user' };
+  const prev = arr[i];
+  const withSrc = { ...it, source: 'user', base: prev ? (prev.source === 'user' ? prev.base : prev.source) : undefined };
   if (i >= 0) arr[i] = withSrc; else arr.push(withSrc);
   emit();
   return withSrc;

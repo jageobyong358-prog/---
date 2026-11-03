@@ -56,7 +56,28 @@ function messagesEditor(list) {
   return box;
 }
 
-function sourceBadge(item) { return h('span', { class: `badge src-${item.source}` }, SRC_LABEL[item.source] || item.source); }
+/** Modal buttons: edit in place (overrides built-in/server items on this device), save as copy, delete/revert. */
+function editActions(orig) {
+  const acts = [];
+  if (orig && orig.source === 'user') acts.push({ label: orig.base ? '원래대로 되돌리기' : '삭제', value: 'delete' });
+  if (orig) acts.push({ label: '사본으로 저장', value: 'copy' });
+  acts.push({ label: '저장', value: 'save', primary: true });
+  return acts;
+}
+
+function asNewCopy(item, orig, prefix) {
+  item.id = newId(prefix);
+  if (orig && item.name === orig.name) item.name = `${item.name} (사본)`;
+}
+
+function overrideNote(orig) {
+  if (!orig) return null;
+  if (orig.source !== 'user') return h('p', { class: 'hint' }, `${SRC_LABEL[orig.source] || ''} 콘텐츠입니다. 저장하면 이 기기에서 바로 바뀌고(이 항목을 쓰는 캐릭터에도 적용), 「원래대로 되돌리기」로 복구할 수 있습니다.`);
+  if (orig.base) return h('p', { class: 'hint' }, `${SRC_LABEL[orig.base] || ''} 콘텐츠를 수정한 상태입니다.`);
+  return null;
+}
+
+function sourceBadge(item) { return h('span', { class: `badge src-${item.source}` }, item.base ? '수정함' : (SRC_LABEL[item.source] || item.source)); }
 
 // ---------------------------------------------------------------------------
 // Lists
@@ -122,7 +143,6 @@ async function editCharacter(orig) {
     id: newId('ch'), name: '', title: '', maxHp: 120, speed: [3, 6], level: 40, defLevel: 38, stagger: [0.6, 0.3],
     resist: { slash: 1, pierce: 1, blunt: 1 }, sinResist: {}, skills: [], defense: null, passives: [], messages: [], image: null,
   });
-  if (orig && orig.source !== 'user') { c.id = newId('ch'); c.name = `${c.name} (사본)`; }
   const f = {
     name: txt(c.name, '이름'), title: txt(c.title, '수식어 / 인격명'), hp: num(c.maxHp, { min: 1 }),
     spdLo: num(c.speed[0], { min: 1 }), spdHi: num(c.speed[1], { min: 1 }), lv: num(c.level), dlv: num(c.defLevel),
@@ -138,7 +158,8 @@ async function editCharacter(orig) {
       ...c.skills.map((s, i) => {
         const sk = sel(atkSkills().map((x) => [x.id, `${x.name} (${sinName(x.sin)})`]), s.id); sk.addEventListener('change', () => { s.id = sk.value; });
         const cp = num(s.copies, { min: 1, max: 6 }); cp.addEventListener('input', () => { s.copies = Math.max(1, +cp.value || 1); });
-        return h('div', { class: 'msg-row' }, h('span', { class: 'chip' }, `스킬 ${i + 1}`), sk, h('span', {}, '장수'), cp,
+        const edit = h('button', { class: 'btn small', type: 'button', title: '이 스킬 이름·수치 편집', onclick: async () => { const cur = getSkill(s.id); if (cur) { await editSkill(cur); renderSkills(); } } }, '✎ 편집');
+        return h('div', { class: 'msg-row' }, h('span', { class: 'chip' }, `스킬 ${i + 1}`), sk, edit, h('span', {}, '장수'), cp,
           h('button', { class: 'icon-btn', type: 'button', 'aria-label': '삭제', onclick: () => { c.skills.splice(i, 1); renderSkills(); } }, '✕'));
       }),
       h('button', { class: 'btn small', type: 'button', onclick: () => { const first = atkSkills()[0]; if (first) { c.skills.push({ id: first.id, copies: c.skills.length === 0 ? 3 : c.skills.length === 1 ? 2 : 1 }); renderSkills(); } } }, '+ 스킬 추가'));
@@ -153,6 +174,7 @@ async function editCharacter(orig) {
   }));
 
   const body = h('div', { class: 'editor' },
+    overrideNote(orig),
     imagePicker(c),
     h('div', { class: 'grid2' }, field('이름', f.name), field('수식어', f.title)),
     h('div', { class: 'grid4' }, field('최대 체력', f.hp), field('속도 최소', f.spdLo), field('속도 최대', f.spdHi), field('흐트러짐 역치(%)', f.stagger)),
@@ -162,15 +184,23 @@ async function editCharacter(orig) {
     h('h4', {}, '죄악 내성 (배율)'),
     h('div', { class: 'grid4' }, SIN_LIST.map(([k, l]) => field(l, sinRes[k]))),
     h('h4', {}, '스킬 덱 (림버스식: 매 턴 덱에서 2장 제시)'), skillRows,
-    field('수비/회피 스킬', defSel),
+    h('div', { class: 'row' }, field('수비/회피 스킬', defSel),
+      h('button', { class: 'btn small', type: 'button', onclick: async () => {
+        const cur = getSkill(defSel.value);
+        if (!cur) return;
+        await editSkill(cur);
+        const opt = defSel.querySelector(`option[value="${cur.id}"]`);
+        const now = getSkill(cur.id);
+        if (opt && now) opt.textContent = `${now.name} (${TYPE_LIST.find((t) => t[0] === now.type)?.[1]})`;
+      } }, '✎ 편집')),
     h('h4', {}, '패시브'), passiveBox,
     h('h4', {}, '합 진행 메시지 (캐릭터 공통)'), messagesEditor(c.messages));
 
-  const actions = [{ label: '저장', value: 'save', primary: true }];
-  if (orig && orig.source === 'user') actions.unshift({ label: '삭제', value: 'delete' });
+  const actions = editActions(orig);
   const r = await modal(orig ? `캐릭터 편집 — ${orig.name}` : '새 캐릭터', body, actions);
-  if (r === 'delete') { await deleteItem('character', c.id); toast('삭제했습니다.'); return; }
-  if (r !== 'save') return;
+  if (r === 'delete') { await deleteItem('character', c.id); toast(orig.base ? '원래대로 되돌렸습니다.' : '삭제했습니다.'); return; }
+  if (r !== 'save' && r !== 'copy') return;
+  const asCopy = r === 'copy';
   Object.assign(c, {
     name: f.name.value.trim() || '이름 없음', title: f.title.value.trim(), maxHp: +f.hp.value || 100,
     speed: [+f.spdLo.value || 1, Math.max(+f.spdLo.value || 1, +f.spdHi.value || 1)], level: +f.lv.value || 0, defLevel: +f.dlv.value || 0,
@@ -179,6 +209,7 @@ async function editCharacter(orig) {
     sinResist: Object.fromEntries(SIN_LIST.map(([k]) => [k, +sinRes[k].value || 1])),
     defense: defSel.value || null,
   });
+  if (asCopy) asNewCopy(c, orig, 'ch');
   try { await saveItem('character', c); toast('저장했습니다.', 'ok'); } catch (e) { toast(`저장 실패: ${e.message}`, 'error'); }
 }
 
@@ -190,7 +221,6 @@ async function editSkill(orig) {
     id: newId('sk'), name: '', sin: 'wrath', type: 'attack', atkType: 'slash', basePower: 4, coinPower: 3, coinCount: 2,
     offLevel: 0, desc: '', effects: [], messages: [], vfx: null, image: null,
   });
-  if (orig && orig.source !== 'user') { s.id = newId('sk'); s.name = `${s.name} (사본)`; }
   const f = {
     name: txt(s.name, '스킬 이름'), sin: sel(SIN_LIST, s.sin), type: sel(TYPE_LIST, s.type), atk: sel(ATK_LIST, s.atkType),
     base: num(s.basePower), coin: num(s.coinPower), cnt: num(s.coinCount, { min: 1, max: 10 }), off: num(s.offLevel),
@@ -224,6 +254,7 @@ async function editSkill(orig) {
   } }, 'VFX 미리보기');
 
   const body = h('div', { class: 'editor' },
+    overrideNote(orig),
     imagePicker(s),
     h('div', { class: 'grid2' }, field('이름', f.name), field('죄악 속성', f.sin)),
     h('div', { class: 'grid2' }, field('스킬 유형', f.type), field('공격 유형', f.atk)),
@@ -236,11 +267,11 @@ async function editSkill(orig) {
     f.vfx,
     h('h4', {}, '합 진행 메시지'), messagesEditor(s.messages));
 
-  const actions = [{ label: '저장', value: 'save', primary: true }];
-  if (orig && orig.source === 'user') actions.unshift({ label: '삭제', value: 'delete' });
+  const actions = editActions(orig);
   const r = await modal(orig ? `스킬 편집 — ${orig.name}` : '새 스킬', body, actions);
-  if (r === 'delete') { await deleteItem('skill', s.id); toast('삭제했습니다.'); return; }
-  if (r !== 'save') return;
+  if (r === 'delete') { await deleteItem('skill', s.id); toast(orig.base ? '원래대로 되돌렸습니다.' : '삭제했습니다.'); return; }
+  if (r !== 'save' && r !== 'copy') return;
+  const asCopy = r === 'copy';
   try {
     s.effects = f.effects.value.trim() ? JSON.parse(f.effects.value) : [];
     s.vfx = f.vfx.value.trim() ? JSON.parse(f.vfx.value) : null;
@@ -249,6 +280,7 @@ async function editSkill(orig) {
     name: f.name.value.trim() || '이름 없는 스킬', sin: f.sin.value, type: f.type.value, atkType: f.atk.value,
     basePower: +f.base.value || 0, coinPower: +f.coin.value || 0, coinCount: Math.max(1, +f.cnt.value || 1), offLevel: +f.off.value || 0, desc: f.desc.value.trim(),
   });
+  if (asCopy) asNewCopy(s, orig, 'sk');
   try { await saveItem('skill', s); toast('저장했습니다.', 'ok'); } catch (e) { toast(`저장 실패: ${e.message}`, 'error'); }
 }
 
@@ -257,7 +289,6 @@ async function editSkill(orig) {
 // ---------------------------------------------------------------------------
 async function editEffect(orig) {
   const e = structuredClone(orig || { id: newId('ef'), kind: 'keyword', name: '', color: '#ff5577', desc: '', turnOnly: false, hooks: {} });
-  if (orig && orig.source !== 'user') { e.id = newId('ef'); e.name = `${e.name} (사본)`; }
   const f = {
     kind: sel([['keyword', '키워드 (상태이상)'], ['passive', '패시브']], e.kind), name: txt(e.name, '이름'),
     color: h('input', { type: 'color', value: e.color || '#ff5577', class: 'color-inp' }),
@@ -286,20 +317,22 @@ async function editEffect(orig) {
     } catch (err) { toast(`JSON 오류: ${err.message}`, 'error'); }
   });
   const body = h('div', { class: 'editor' },
+    overrideNote(orig),
     h('div', { class: 'grid3' }, field('종류', f.kind), field('이름', f.name), field('색상', f.color)),
     field('효과 설명 (자연어)', f.desc, '원하는 효과를 자유롭게 적으면 AI가 전투 엔진에서 실제로 동작하는 코드로 구현합니다.'),
     h('div', { class: 'row' }, aiBtn, checkBtn), status,
     field('구현 코드 (훅 → JS 본문)', f.hooks, '고급: 직접 수정할 수 있습니다. 코드는 격리된 샌드박스에서만 실행됩니다.'));
-  const actions = [{ label: '저장', value: 'save', primary: true }];
-  if (orig && orig.source === 'user') actions.unshift({ label: '삭제', value: 'delete' });
+  const actions = editActions(orig);
   const r = await modal(orig ? `효과 편집 — ${orig.name}` : '새 키워드 / 패시브', body, actions);
-  if (r === 'delete') { await deleteItem('effect', e.id); toast('삭제했습니다.'); return; }
-  if (r !== 'save') return;
+  if (r === 'delete') { await deleteItem('effect', e.id); toast(orig.base ? '원래대로 되돌렸습니다.' : '삭제했습니다.'); return; }
+  if (r !== 'save' && r !== 'copy') return;
+  const asCopy = r === 'copy';
   let hooks;
   try { hooks = JSON.parse(f.hooks.value || '{}'); } catch (err) { toast(`JSON 오류: ${err.message}`, 'error'); return; }
   const errs = await sandbox.call('validate', { hooks });
   if (errs.length) { toast(`코드 오류로 저장하지 않았습니다: ${errs.join(' / ')}`, 'error', 6000); return; }
   Object.assign(e, { kind: f.kind.value, name: f.name.value.trim() || '이름 없음', color: f.color.value, desc: f.desc.value.trim(), hooks });
+  if (asCopy) asNewCopy(e, orig, 'ef');
   try { await saveItem('effect', e); toast('저장했습니다.', 'ok'); } catch (err) { toast(`저장 실패: ${err.message}`, 'error'); }
 }
 
