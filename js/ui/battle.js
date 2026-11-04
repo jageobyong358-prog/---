@@ -6,7 +6,7 @@ import { settings } from '../store.js';
 import { playVfx, defaultVfx, shoutText, popNumber, shake, SIN_COLORS } from '../vfx.js';
 import { generateVfx, aiAvailable } from '../ai.js';
 import { portrait } from './editors.js';
-import { startRecording, stopRecording, isRecording, recorderSupported, downloadVideo, onRecorderChange } from '../recorder.js';
+import { startRecording, stopRecording, isRecording, recorderSupported, recorderMode, downloadVideo, onRecorderChange } from '../recorder.js';
 
 const MAX_TEAM = 5;
 const pick = { ally: [], enemy: [] };
@@ -54,7 +54,9 @@ export function renderSetup() {
     h('div', { class: 'list-head' }, h('h2', {}, '전투 준비'),
       h('div', { class: 'row' },
         lastVideo ? h('button', { class: 'btn', onclick: () => downloadVideo(lastVideo) }, '🎬 직전 전투 영상 다운로드') : null,
-        h('label', { class: 'check rec-check', title: recorderSupported() ? '전투 화면을 녹화해 끝난 뒤 영상으로 받을 수 있습니다.' : '이 브라우저는 화면 녹화를 지원하지 않습니다.' },
+        h('label', { class: 'check rec-check', title: '대상 지정과 스킬 선택을 자동으로 하고, 끝날 때까지 턴을 진행합니다.' },
+          autoCheck(), ' 자동 전투'),
+        h('label', { class: 'check rec-check', title: recorderSupported() ? '전투 화면을 녹화해 끝난 뒤 영상으로 받을 수 있습니다.' : '이 브라우저는 녹화를 지원하지 않습니다.' },
           recCheck(), ' 전투를 영상으로 녹화'),
         h('button', { class: 'btn primary big', disabled: !pick.ally.length || !pick.enemy.length, onclick: startBattle }, '전투 시작 ▶'))),
     h('div', { class: 'setup' }, col('ally', '아군'), col('enemy', '적군')));
@@ -63,6 +65,12 @@ export function renderSetup() {
 // ---------------------------------------------------------------------------
 // Start
 // ---------------------------------------------------------------------------
+function autoCheck() {
+  const cb = h('input', { type: 'checkbox', checked: !!settings.get().autoBattle });
+  cb.addEventListener('change', () => settings.set({ autoBattle: cb.checked }));
+  return cb;
+}
+
 function recCheck() {
   const cb = h('input', { type: 'checkbox', checked: !!settings.get().recordBattle && recorderSupported(), disabled: !recorderSupported() });
   cb.addEventListener('change', () => settings.set({ recordBattle: cb.checked }));
@@ -94,7 +102,9 @@ function renderRecCtl() {
 }
 
 async function startBattle() {
-  if (settings.get().recordBattle && recorderSupported() && !isRecording()) await beginRecording();
+  const wantRec = settings.get().recordBattle && recorderSupported() && !isRecording();
+  // tab capture must start inside the click; canvas recording starts once the arena exists
+  if (wantRec && recorderMode() === 'screen') await beginRecording();
   const allies = pick.ally.map(getChar).map((c) => structuredClone(c));
   const enemies = pick.enemy.map(getChar).map((c) => structuredClone(c));
   const skillsMap = {}; for (const s of lib.skills) skillsMap[s.id] = s;
@@ -102,8 +112,9 @@ async function startBattle() {
   const strip = (c) => { const o = { ...c }; delete o.image; delete o.source; return o; };
   const skillsForEngine = {}; for (const [k, s] of Object.entries(skillsMap)) { const o = { ...s }; delete o.image; delete o.vfx; delete o.source; skillsForEngine[k] = o; }
   const r = await sandbox.call('create', { allies: allies.map(strip), enemies: enemies.map(strip), skills: skillsForEngine, effects: effectsMap, seed: (Math.random() * 2 ** 31) | 0 });
-  B = { view: r.view, plan: {}, chars: Object.fromEntries([...allies, ...enemies].map((c) => [c.id, c])), selected: null, playing: false, log: [], video: null };
+  B = { view: r.view, plan: {}, chars: Object.fromEntries([...allies, ...enemies].map((c) => [c.id, c])), selected: null, playing: false, log: [], video: null, auto: !!settings.get().autoBattle };
   renderArena();
+  if (wantRec && recorderMode() === 'canvas') await beginRecording();
   prefetchVfx([...allies, ...enemies]);
   await playEvents(r.events);
   await nextTurn();
@@ -145,6 +156,7 @@ function renderArena() {
     h('div', { id: 'arena', class: B.selected ? 'targeting' : '' },
       h('div', { class: 'arena-top' },
         h('div', { class: 'turn-label' }, `TURN ${v.turn}`),
+        h('button', { class: `btn small auto-btn ${B.auto ? 'active' : ''}`, 'aria-pressed': B.auto ? 'true' : 'false', disabled: !!v.result, onclick: toggleAuto }, B.auto ? '⏸ 자동 전투 중' : '▶ 자동 전투'),
         h('div', { id: 'rec-ctl', class: 'rec-ctl' }),
         h('div', { class: 'speed-ctl' }, '속도 ', [1, 2, 4].map((sp) => h('button', { class: `btn small ${settings.get().speed === sp ? 'active' : ''}`, onclick: () => { settings.set({ speed: sp }); renderArena(); } }, `x${sp}`))),
         h('button', { class: 'btn small', onclick: () => { if (!B.playing || confirm('전투를 포기하고 나갈까요?')) renderSetup(); } }, '나가기')),
@@ -152,8 +164,8 @@ function renderArena() {
       h('div', { id: 'clash-stage', class: 'hidden' }),
       h('div', { class: 'row-units ally' }, v.units.filter((u) => u.team === 'ally').map(renderUnit)),
       h('div', { class: 'arena-actions' },
-        h('button', { class: 'btn', disabled: B.playing || !!v.result, onclick: autoPlan }, '자동 지정'),
-        h('button', { class: 'btn primary big', disabled: B.playing || !!v.result, onclick: resolve }, '전투 개시 ⚔'))),
+        h('button', { class: 'btn', disabled: B.playing || B.auto || !!v.result, onclick: autoPlan }, '자동 지정'),
+        h('button', { class: 'btn primary big', disabled: B.playing || B.auto || !!v.result, onclick: resolve }, B.auto ? '자동 진행 중…' : '전투 개시 ⚔'))),
     h('div', { id: 'battle-log' }, B.log.map((l) => h('div', { class: `log ${l.cls}` }, l.text))),
     v.result ? h('div', { class: `result-banner ${v.result}` }, v.result === 'win' ? '승리' : '패배',
       h('div', { class: 'row' },
@@ -260,19 +272,58 @@ function onUnitClick(u) {
   renderArena();
 }
 
+const maxPower = (sk) => (sk ? (sk.basePower || 0) + Math.max(0, sk.coinPower || 0) * (sk.coinCount || 1) : 0);
+
+/**
+ * Pick a skill and a target for one ally, Limbus style:
+ * clash the enemy that targets this unit with the strongest skill (or defend when
+ * nearly dead and clearly outmatched); otherwise focus a staggered / low-HP enemy.
+ */
+function smartPlan(u, enemies) {
+  const hand = [...new Set(u.hand)].map(getSkill).filter((x) => x && x.type !== 'guard' && x.type !== 'evade');
+  const threats = B.view.enemyActions.filter((a) => a.targetUid === u.uid && !unitView(a.uid)?.dead);
+  const threat = threats.sort((x, y) => maxPower(getSkill(y.skillId)) - maxPower(getSkill(x.skillId)))[0];
+  const score = (sk) => maxPower(sk) * Math.min(Math.max(1, sk.weight || 1), enemies.length) + (sk.offLevel || 0);
+  const best = hand.sort((x, y) => score(y) - score(x))[0];
+  if (threat) {
+    const tPow = maxPower(getSkill(threat.skillId));
+    const def = u.defense && getSkill(u.defense);
+    if (def && u.hp / u.maxHp < 0.3 && tPow > maxPower(best) + 3) return { uid: u.uid, skillId: def.id, targetUid: null };
+    if (best) return { uid: u.uid, skillId: hand.sort((x, y) => maxPower(y) - maxPower(x))[0].id, targetUid: threat.uid };
+  }
+  if (!best) return null;
+  const target = [...enemies].sort((x, y) => (y.staggered - x.staggered) || (x.hp - y.hp))[0];
+  return target ? { uid: u.uid, skillId: best.id, targetUid: target.uid } : null;
+}
+
 function autoPlan() {
   const enemies = B.view.units.filter((u) => u.team === 'enemy' && !u.dead);
   for (const u of B.view.units.filter((x) => x.team === 'ally' && !x.dead && !x.staggered)) {
     const p = B.plan[u.uid];
     if (p && (p.targetUid || ['guard', 'evade'].includes(getSkill(p.skillId)?.type))) continue;
-    // prefer clashing an enemy that targets this unit (Limbus-style)
-    const threat = B.view.enemyActions.find((a) => a.targetUid === u.uid);
-    const skillId = p?.skillId || u.hand[Math.floor(Math.random() * u.hand.length)];
-    const target = threat?.uid || enemies[Math.floor(Math.random() * enemies.length)]?.uid;
-    if (skillId && target) B.plan[u.uid] = { uid: u.uid, skillId, targetUid: target };
+    const plan = smartPlan(u, enemies);
+    if (plan) B.plan[u.uid] = plan;
   }
   B.selected = null;
   renderArena();
+}
+
+function toggleAuto() {
+  if (!B) return;
+  B.auto = !B.auto;
+  settings.set({ autoBattle: B.auto });
+  renderArena();
+  if (B.auto) scheduleAuto();
+}
+
+/** In auto battle, plan and resolve the turn on its own. */
+function scheduleAuto() {
+  const cur = B;
+  setTimeout(() => {
+    if (B !== cur || !B.auto || B.playing || B.view.result) return;
+    autoPlan();
+    resolve();
+  }, 500 / (settings.get().speed || 1));
 }
 
 // ---------------------------------------------------------------------------
@@ -285,13 +336,14 @@ async function nextTurn() {
   await playEvents(r.events);
   B.view = r.view;
   renderArena();
+  if (B.auto) scheduleAuto();
 }
 
 async function resolve() {
   if (B.playing) return;
   const ready = B.view.units.filter((u) => u.team === 'ally' && !u.dead && !u.staggered);
   const missing = ready.filter((u) => !B.plan[u.uid] || (!B.plan[u.uid].targetUid && !['guard', 'evade'].includes(getSkill(B.plan[u.uid].skillId)?.type)));
-  if (missing.length) { autoPlan(); toast('지정하지 않은 아군은 자동으로 지정했습니다.'); }
+  if (missing.length) { autoPlan(); if (!B.auto) toast('지정하지 않은 아군은 자동으로 지정했습니다.'); }
   const actions = Object.values(B.plan);
   B.playing = true; renderArena();
   try {

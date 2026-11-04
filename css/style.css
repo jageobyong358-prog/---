@@ -138,7 +138,7 @@ h4 { margin: 14px 0 6px; font-size: 13px; color: var(--gold); letter-spacing: 0.
 
 /* ---------- arena ---------- */
 #arena { position: relative; border: 1px solid #3a1d22; border-radius: 8px; padding: 12px; background: radial-gradient(900px 400px at 50% 50%, #241016, #0d0b0e 70%); min-height: 560px; overflow: hidden; }
-.arena-top { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+.arena-top { display: flex; align-items: center; gap: 8px 12px; margin-bottom: 10px; flex-wrap: wrap; }
 .turn-label { font-family: var(--font); font-weight: 900; font-size: 22px; color: var(--gold); flex: 1; }
 .speed-ctl { display: flex; gap: 4px; align-items: center; font-size: 12px; color: var(--muted); }
 .row-units { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; min-height: 160px; }
@@ -349,3 +349,20 @@ h4 { margin: 14px 0 6px; font-size: 13px; color: var(--gold); letter-spacing: 0.
 /* attack weight */
 .sc-weight { color: #ffcc66; font-weight: 700; }
 .unit.weight-hit { box-shadow: 0 0 0 2px #ffcc66, 0 0 22px #ffaa3388; }
+
+/* auto battle */
+.auto-btn.active { border-color: #4fd18b; color: #9effc4; background: #10241a; }
+.auto-btn.active::before { content: ''; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #4fd18b; margin-right: 2px; animation: pulse 1s infinite; }
+
+/* phones: compact header (logo + status on one line, tabs scroll sideways) */
+@media (max-width: 640px) {
+  .top { gap: 6px 10px; padding: 8px 12px; }
+  .logo { font-size: 17px; }
+  .header-right { margin-left: auto; gap: 6px; font-size: 12px; }
+  .tabs { order: 3; flex: 1 0 100%; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .tabs::-webkit-scrollbar { display: none; }
+  .tab-btn { white-space: nowrap; padding: 6px 10px; }
+  main { padding: 10px; }
+  #arena { padding: 10px 8px; }
+  .row-units { gap: 8px; }
+}
