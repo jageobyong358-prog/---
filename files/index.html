@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>게임 파일 둘러보기</title>
+  <meta name="description" content="공개 Google Drive 에 정리된 게임 에셋(이미지·오디오·영상·폰트·텍스트)을 폴더·검색·미리보기로 둘러봅니다.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Black+Han+Sans&family=Noto+Sans+KR:wght@400;700;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="files.css">
+</head>
+<body>
+  <header class="top">
+    <a class="logo" href="../"><span class="logo-mark">合</span></a>
+    <div class="title"><b>게임 파일 둘러보기</b> <span id="src-title" class="muted"></span></div>
+    <div class="search">
+      <input id="q" type="search" placeholder="전체 파일 이름 검색 (예: bgm, Yi Sang, .png)" autocomplete="off">
+    </div>
+    <button id="tree-toggle" class="btn small only-mobile" aria-label="폴더 목록">☰ 폴더</button>
+  </header>
+
+  <div class="layout">
+    <aside id="tree" class="tree" aria-label="폴더"></aside>
+    <main class="main">
+      <div class="toolbar">
+        <nav id="crumbs" class="crumbs" aria-label="경로"></nav>
+        <div class="tools">
+          <div id="kinds" class="chips" role="group" aria-label="종류 필터"></div>
+          <select id="sort" aria-label="정렬">
+            <option value="name">이름순</option>
+            <option value="kind">종류순</option>
+          </select>
+          <div class="seg" role="group" aria-label="보기">
+            <button data-view="grid" class="active" title="격자">▦</button>
+            <button data-view="list" title="목록">☰</button>
+          </div>
+        </div>
+      </div>
+      <div id="status" class="status"></div>
+      <div id="items" class="items grid"></div>
+      <div id="more" class="more"></div>
+    </main>
+  </div>
+
+  <div id="viewer" class="viewer" hidden>
+    <div class="viewer-bar">
+      <div class="viewer-name"><span id="v-icon"></span> <b id="v-name"></b> <span id="v-path" class="muted"></span></div>
+      <div class="viewer-actions">
+        <button class="btn small" id="v-prev" title="이전 (←)">◀</button>
+        <button class="btn small" id="v-next" title="다음 (→)">▶</button>
+        <a class="btn small" id="v-open" target="_blank" rel="noopener">Drive에서 열기</a>
+        <a class="btn small" id="v-dl" target="_blank" rel="noopener">다운로드</a>
+        <button class="btn small" id="v-close" title="닫기 (Esc)">✕</button>
+      </div>
+    </div>
+    <div id="v-body" class="viewer-body"></div>
+  </div>
+
+  <script type="module" src="files.js"></script>
+</body>
+</html>
