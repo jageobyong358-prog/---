@@ -186,10 +186,27 @@ function renderUnit(u) {
   h('div', { class: 'spbar', title: '정신력' }, h('div', { class: `spfill ${u.sp < 0 ? 'neg' : ''}`, style: { width: `${Math.abs(u.sp) / 45 * 50}%`, left: u.sp < 0 ? `${50 - Math.abs(u.sp) / 45 * 50}%` : '50%' } }), h('span', { class: 'sptext' }, `SP ${u.sp}`)),
   h('div', { class: 'statuses' }, Object.entries(u.statuses).map(([id, s]) => statusChip(id, s.potency, s.count))),
   u.staggered ? h('div', { class: 'stg-label' }, ['', '흐트러짐', '흐트러짐+', '흐트러짐++'][u.staggered]) : null,
-  intent ? h('div', { class: 'intent' }, skillBadge(getSkill(intent.skillId)), ' → ', unitView(intent.targetUid)?.name || '?') : null,
+  intent ? h('div', { class: 'intent' }, skillBadge(getSkill(intent.skillId)), ' → ', targetText(u, getSkill(intent.skillId), intent.targetUid)) : null,
   u.team === 'ally' && !u.dead && !u.staggered && !B.view.result ? handEl(u) : null,
-  plan ? h('div', { class: 'intent mine' }, skillBadge(getSkill(plan.skillId)), plan.targetUid ? ` → ${unitView(plan.targetUid)?.name}` : ' (방어)') : null);
+  plan ? h('div', { class: 'intent mine' }, skillBadge(getSkill(plan.skillId)), plan.targetUid ? ` → ${targetText(u, getSkill(plan.skillId), plan.targetUid)}` : ' (방어)') : null);
   return el;
+}
+
+/** Same rule as the engine: main target + the next (weight-1) living enemies in row order. */
+function weightTargetsView(attacker, skill, targetUid) {
+  const w = Math.max(1, Math.min(10, Math.round(skill?.weight || 1)));
+  const foes = B.view.units.filter((x) => x.team !== attacker.team && !x.dead);
+  const i = foes.findIndex((x) => x.uid === targetUid);
+  if (i < 0) return [];
+  const out = [];
+  for (let k = 1; out.length < w - 1 && k < foes.length; k++) out.push(foes[(i + k) % foes.length]);
+  return out;
+}
+
+function targetText(attacker, skill, targetUid) {
+  const main = unitView(targetUid)?.name || '?';
+  const extra = weightTargetsView(attacker, skill, targetUid);
+  return extra.length ? `${main} 외 ${extra.length}명 (${extra.map((x) => x.name).join(', ')})` : main;
 }
 
 function statusChip(id, potency, count) {
@@ -217,7 +234,8 @@ function handEl(u) {
     },
     s.image ? h('img', { src: s.image, alt: '' }) : null,
     h('span', { class: 'sc-name' }, s.name),
-    h('span', { class: 'sc-pow' }, `${s.basePower}${s.coinPower >= 0 ? '+' : ''}${s.coinPower}×${s.coinCount}`),
+    h('span', { class: 'sc-pow' }, `${s.basePower}${s.coinPower >= 0 ? '+' : ''}${s.coinPower}×${s.coinCount}`,
+      (s.weight || 1) > 1 ? h('b', { class: 'sc-weight', title: `공격 가중치 ${s.weight}: 적 ${s.weight}명을 함께 공격` }, ` ⚖${s.weight}`) : null),
     h('span', { class: 'sc-type' }, { attack: '', guard: '🛡', evade: '💨', counter: '↺' }[s.type] || ''));
   }));
 }
@@ -419,6 +437,13 @@ async function playEvents(events) {
         unitEl(ev.att)?.classList.add('lunge');
         await wait(380);
         unitEl(ev.att)?.classList.remove('lunge');
+        break;
+      }
+      case 'multiTarget': {
+        const names = ev.targets.map((id) => unitView(id)?.name).join(', ');
+        addLog(`  ⚖ 가중치 ${ev.targets.length}: ${names} 동시 공격`, 'sys');
+        for (const id of ev.targets) unitEl(id)?.classList.add('weight-hit');
+        setTimeout(() => ev.targets.forEach((id) => unitEl(id)?.classList.remove('weight-hit')), 900 / (settings.get().speed || 1));
         break;
       }
       case 'redirect':

@@ -24,8 +24,8 @@ export const DEFAULT_SKILLS = [
   // --- 쇠망치 도건 ---
   S({ id: 'sk_do1', name: '내려찍기', sin: 'sloth', atkType: 'blunt', basePower: 5, coinPower: 2, coinCount: 2,
     desc: '[적중 시] 진동 2 부여', effects: [{ when: 'onHit', do: 'inflict', status: 'tremor', potency: 2, count: 1, who: 'target' }] }),
-  S({ id: 'sk_do2', name: '지면 강타', sin: 'gluttony', atkType: 'blunt', basePower: 6, coinPower: 3, coinCount: 2,
-    desc: '[적중 시] 진동 3 부여 / [2번째 코인 적중] 진동 폭발',
+  S({ id: 'sk_do2', name: '지면 강타', sin: 'gluttony', atkType: 'blunt', basePower: 5, coinPower: 3, coinCount: 2, weight: 2,
+    desc: '가중치 2 / [적중 시] 진동 3 부여 / [2번째 코인 적중] 진동 폭발',
     effects: [
       { when: 'onHit', do: 'inflict', status: 'tremor', potency: 3, count: 1, who: 'target' },
       { when: 'onHit', coin: 2, do: 'tremorBurst', who: 'target' },
@@ -65,8 +65,8 @@ export const DEFAULT_SKILLS = [
     desc: '[적중 시] 침잠 2 부여', effects: [{ when: 'onHit', do: 'inflict', status: 'sinking', potency: 2, count: 2, who: 'target' }] }),
   S({ id: 'sk_pr2', name: '검은 낫', sin: 'envy', atkType: 'slash', basePower: 6, coinPower: -2, coinCount: 2,
     desc: '마이너스 코인 / [적중 시] 다음 턴 취약 1', effects: [{ when: 'onHit', do: 'inflict', status: 'fragile', potency: 1, count: 1, who: 'target', nextTurn: true }] }),
-  S({ id: 'sk_pr3', name: '심연 강림', sin: 'gloom', atkType: 'pierce', basePower: 6, coinPower: 4, coinCount: 3, offLevel: 4,
-    desc: '[사용 시] 모든 적에게 침잠 2 부여', effects: [{ when: 'onUse', do: 'inflict', status: 'sinking', potency: 2, count: 1, who: 'enemies' }],
+  S({ id: 'sk_pr3', name: '심연 강림', sin: 'gloom', atkType: 'pierce', basePower: 5, coinPower: 4, coinCount: 3, offLevel: 4, weight: 3,
+    desc: '가중치 3 / [사용 시] 모든 적에게 침잠 2 부여', effects: [{ when: 'onUse', do: 'inflict', status: 'sinking', potency: 2, count: 1, who: 'enemies' }],
     messages: [{ trigger: 'skillUse', text: '가라앉아라...', color: '#4a7dff' }] }),
 ];
 

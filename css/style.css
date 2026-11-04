@@ -345,3 +345,7 @@ h4 { margin: 14px 0 6px; font-size: 13px; color: var(--gold); letter-spacing: 0.
 .ai-live-code { margin: 6px 0 0; color: #e8f6ff; white-space: pre-wrap; word-break: break-all; }
 .ai-live-code:empty { display: none; }
 .ai-live[data-phase="write"] .ai-live-code::after { content: '▌'; color: #9effc4; animation: pulse 0.8s infinite; }
+
+/* attack weight */
+.sc-weight { color: #ffcc66; font-weight: 700; }
+.unit.weight-hit { box-shadow: 0 0 0 2px #ffcc66, 0 0 22px #ffaa3388; }

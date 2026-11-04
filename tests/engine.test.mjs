@@ -43,3 +43,24 @@ assert.equal(E.validateEffect({ hooks: { onHit: 'this is not js(' } }).length, 1
 
 // level/clash power: offense diff 6 => +2 clash power
 console.log('ok');
+
+// attack weight: a weight-3 skill hits 3 enemies with every coin
+{
+  const sk = { id: 'sk_w', name: '휩쓸기', type: 'attack', sin: 'wrath', atkType: 'slash', basePower: 5, coinPower: 3, coinCount: 2, weight: 3, effects: [] };
+  const sk2 = { ...skills };
+  sk2.sk_w = sk;
+  const hero = { ...ch('ch_arin'), skills: [{ id: 'sk_w', copies: 3 }], passives: [] };
+  const foe = { ...ch('en_mech'), maxHp: 999, skills: [{ id: 'sk_mech1', copies: 1 }] };
+  const B = E.createBattle({ allies: [hero], enemies: [foe, foe, foe, foe], skills: sk2, effects, seed: 11 });
+  E.beginTurn(B);
+  B.enemyActions = []; // let the hero attack unopposed
+  const v = E.view(B);
+  const enemies = v.units.filter((u) => u.team === 'enemy');
+  const r = E.resolveTurn(B, [{ uid: v.units[0].uid, skillId: 'sk_w', targetUid: enemies[1].uid }]);
+  const hitTargets = r.events.filter((e) => e.type === 'hit').map((e) => e.def);
+  const multi = r.events.find((e) => e.type === 'multiTarget');
+  assert.deepEqual([...multi.targets], [enemies[1].uid, enemies[2].uid, enemies[3].uid]);
+  assert.equal(hitTargets.length, 6, '2 coins x 3 targets');
+  assert.equal(new Set(hitTargets).size, 3);
+  console.log('weight ok', multi.targets);
+}

@@ -578,24 +578,47 @@
   }
 
   // ----- attack (hits) ----------------------------------------------------------------
+  /**
+   * Attack weight (가중치): a weight-N skill hits the main target and up to N-1 more
+   * enemies next to it (in row order, wrapping). Extra targets don't clash; every
+   * coin hits every target.
+   */
+  function weightTargets(B, att, skill, def) {
+    const w = clamp(Math.round(skill.weight || 1), 1, 10);
+    const foes = enemiesOf(B, att);
+    const idx = foes.indexOf(def);
+    const extra = [];
+    if (idx < 0) return extra;
+    for (let k = 1; extra.length < w - 1 && k < foes.length; k++) extra.push(foes[(idx + k) % foes.length]);
+    return extra;
+  }
+
   function attack(B, att, skill, def, coinsLeft, clashCount, shield) {
     if (att.dead || def.dead) return;
+    const extra = weightTargets(B, att, skill, def);
+    if (extra.length) emit(B, { type: 'multiTarget', att: att.uid, skill: skill.id, targets: [def.uid, ...extra.map((u) => u.uid)] });
     const flips = tossCoins(B, att, skill, coinsLeft);
     let power = skill.basePower || 0;
     const shieldBox = { value: shield || 0 };
     const startIdx = (skill.coinCount || 1) - coinsLeft;
     for (let k = 0; k < flips.length; k++) {
-      if (att.dead || def.dead || B.result) break;
+      const targets = [def, ...extra].filter((t) => !t.dead);
+      if (att.dead || !targets.length || B.result) break;
       if (att.staggered && k > 0) break;
       const coinIndex = startIdx + k;
       if (flips[k]) power += coinValue(att, skill);
-      const mods = powerMods(B, att, skill, def, 'hit');
+      const mods = powerMods(B, att, skill, targets[0], 'hit');
       const p = Math.max(0, power + mods);
-      fire(B, 'onCoinUse', att, { skill, target: def, coinIndex, heads: flips[k] });
+      fire(B, 'onCoinUse', att, { skill, target: targets[0], coinIndex, heads: flips[k] });
       if (att.dead) break;
-      hit(B, att, skill, def, p, coinIndex, flips[k], clashCount, shieldBox);
+      for (const t of targets) {
+        if (t.dead || att.dead || B.result) continue;
+        // the guard shield only protects the unit that guarded (the main target)
+        hit(B, att, skill, t, p, coinIndex, flips[k], clashCount, t === def ? shieldBox : null);
+      }
     }
   }
+
 
   function hit(B, att, skill, def, power, coinIndex, heads, clashCount, shieldBox) {
     if (def.dead) return;
