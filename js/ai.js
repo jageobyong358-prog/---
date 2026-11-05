@@ -168,6 +168,7 @@ const RULES = `
 - 피해 배율 = 1 + (물리 내성-1) + (죄악 내성-1) + (공격레벨-방어레벨)/(|차이|+25) + 합 횟수 x3%(최대 30%) + 기타 %.
 - 내성 배율: 치명 2.0 / 취약 1.5 / 보통 1.0 / 견딤 0.5 / 내성 0.25. 흐트러짐 상태면 물리 내성이 치명(2.0)이 됨.
 - 공격 유형: slash(참격), pierce(관통), blunt(타격). 스킬 유형: attack, guard(수비), evade(회피), counter(반격).
+- 파괴 불가 코인(unbreakable: 코인별 true/false 배열, 붉은 코인): 합에서 져도 파괴되지 않고 코인 위력이 ±1(부호 유지)이 됨. 공격 스킬이면 합에서 져도 상대 공격이 끝난 뒤 파괴 불가 코인으로 반격. 마이너스 코인이면 -1이 되어 오히려 저점이 높아지므로 "깨진 코인 1개당 최종 위력 -N"(do: powerPerBroken, value: -N, when: power) 같은 견제 효과를 붙이기도 함.
 - 공격 가중치(weight, 1~5): 한 번에 공격하는 적의 수. 지정 대상과 합을 하고, 그 옆의 적들(weight-1명)도 코인마다 함께 타격(합 없이 일방 공격).
 - 죄악 속성: wrath(분노) lust(색욕) sloth(나태) gluttony(탐식) gloom(우울) pride(오만) envy(질투).
 - 흐트러짐: 체력이 흐트러짐 역치 아래로 떨어지면 흐트러짐(다음 턴 종료까지 행동 불가).
@@ -188,7 +189,7 @@ const HOOK_DOC = `
 훅 목록:
 - onBattleStart, onTurnStart, onTurnEnd : ctx.self
 - onSkillUse : ctx.self, ctx.target, ctx.skill, ctx.clash(bool)
-- modifyPower : ctx.self, ctx.target, ctx.skill, ctx.phase('clash'|'hit'), ctx.addPower(n)  // 합/타격 위력 보정
+- modifyPower : ctx.self, ctx.target, ctx.skill, ctx.phase('clash'|'hit'), ctx.brokenCoins(이 스킬의 깨진 코인 수), ctx.addPower(n)  // 합/타격 위력 보정
 - onClashWin / onClashLose : ctx.self, ctx.opponent, ctx.skill, ctx.clashCount
 - onCoinToss : ctx.self, ctx.skill, ctx.heads, ctx.coinIndex   // 코인을 던질 때마다
 - onCoinUse : ctx.self, ctx.target, ctx.skill, ctx.coinIndex, ctx.heads  // 공격 코인으로 타격하기 직전
@@ -273,6 +274,7 @@ export async function generateSkillEffects({ skill, customEffects = [], onProgre
 - "gainSP" / "heal" / "damage": value
 - "tremorBurst"
 - "power": value  (when 이 "clash" 또는 "power" 일 때 위력 +value)
+- "powerPerBroken": value  (when 이 "clash" 또는 "power" 일 때 깨진 코인 1개당 위력 +value, 보통 음수)
 - "damagePct": value (when 이 "beforeHit" 일 때 피해량 +value%)
 - "script": code (위 효과 코드 API의 JS 본문, ctx.self=사용자, ctx.target=대상. 단순 동작으로 표현할 수 없는 조건부 효과에 사용)
 사용 가능한 커스텀 키워드 id: ${customEffects.filter((e) => e.kind === 'keyword').map((e) => `${e.id}(${e.name})`).join(', ') || '없음'}`;
@@ -295,7 +297,7 @@ export async function generateVfx({ skill, prompt, onProgress }) {
   return extractJson(await callAI({ system, messages, maxTokens: 4000, onProgress }));
 }
 
-const SKILL_OPS = ['inflict', 'gainSP', 'heal', 'damage', 'tremorBurst', 'power', 'damagePct', 'script'];
+const SKILL_OPS = ['inflict', 'gainSP', 'heal', 'damage', 'tremorBurst', 'power', 'powerPerBroken', 'damagePct', 'script'];
 
 /** Validate an admin bundle: effect code compiles, skill effects / references are valid. */
 async function checkBundle(bundle, library) {
@@ -339,7 +341,7 @@ JSON 객체 하나만 출력합니다:
 {"summary": "만든 내용 요약(한국어)",
  "effects": [{"id":"ef_영문","kind":"keyword|passive","name":"","color":"#hex","desc":"","turnOnly":false,"hooks":{}}],
  "skills": [{"id":"sk_영문","name":"","sin":"wrath..","type":"attack|guard|evade|counter","atkType":"slash|pierce|blunt",
-   "basePower":0,"coinPower":0,"coinCount":1,"offLevel":0,"weight":1,"desc":"","effects":[스킬 효과 형식],
+   "basePower":0,"coinPower":0,"coinCount":1,"offLevel":0,"weight":1,"unbreakable":[false,false],"desc":"","effects":[스킬 효과 형식],
    "messages":[{"trigger":"skillUse|clashStart|clashWin|clashLose|kill","text":"","color":"#hex"}],"vfx": VFX 또는 null}],
  "characters": [{"id":"ch_영문","name":"","title":"","maxHp":120,"speed":[3,6],"level":40,"defLevel":38,"stagger":[0.6,0.3],
    "resist":{"slash":1,"pierce":1,"blunt":1},"sinResist":{},"skills":[{"id":"스킬id","copies":3},{"id":"","copies":2},{"id":"","copies":1}],

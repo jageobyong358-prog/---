@@ -364,3 +364,12 @@ h4 { margin: 14px 0 6px; font-size: 13px; color: var(--gold); letter-spacing: 0.
   #arena { padding: 10px 8px; }
   .row-units { gap: 8px; }
 }
+
+/* unbreakable coins (red) */
+.coin.ub { background: radial-gradient(circle at 35% 35%, #ffd0d0, #d4202f 60%, #5e0710); border-color: #ff8a8a; box-shadow: 0 0 6px #ff223388; }
+.coin.ub.tails { background: radial-gradient(circle at 35% 35%, #a36a6a, #5a1d22 60%, #250609); border-color: #a54b4b; }
+.coin.weak { opacity: 0.6; transform: scale(0.82); outline: 1px dashed #ff8a8a; outline-offset: 1px; }
+.sc-ub { color: #ff6b78; font-weight: 700; }
+.ub-coins { display: flex; flex-wrap: wrap; gap: 10px; }
+.ub-coin-pick { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; cursor: pointer; }
+.ub-coin-pick .coin { width: 14px; height: 14px; display: inline-block; }

@@ -247,7 +247,8 @@ function handEl(u) {
     s.image ? h('img', { src: s.image, alt: '' }) : null,
     h('span', { class: 'sc-name' }, s.name),
     h('span', { class: 'sc-pow' }, `${s.basePower}${s.coinPower >= 0 ? '+' : ''}${s.coinPower}×${s.coinCount}`,
-      (s.weight || 1) > 1 ? h('b', { class: 'sc-weight', title: `공격 가중치 ${s.weight}: 적 ${s.weight}명을 함께 공격` }, ` ⚖${s.weight}`) : null),
+      (s.weight || 1) > 1 ? h('b', { class: 'sc-weight', title: `공격 가중치 ${s.weight}: 적 ${s.weight}명을 함께 공격` }, ` ⚖${s.weight}`) : null,
+      (s.unbreakable || []).some(Boolean) ? h('b', { class: 'sc-ub', title: '파괴 불가 코인: 합에서 져도 깨지지 않고, 상대 공격 후 반격' }, ` ⛓${s.unbreakable.filter(Boolean).length}`) : null),
     h('span', { class: 'sc-type' }, { attack: '', guard: '🛡', evade: '💨', counter: '↺' }[s.type] || ''));
   }));
 }
@@ -446,7 +447,7 @@ function clashPanel(side, uid, skillId) {
     h('div', { class: 'clash-skill' }, s.name || '?'),
     h('div', { class: 'clash-meta' }, `${u?.name || ''} · ${s.basePower}${s.coinPower >= 0 ? '+' : ''}${s.coinPower}`),
     h('div', { class: 'clash-power' }, s.basePower ?? 0),
-    h('div', { class: 'coins' }, Array.from({ length: s.coinCount || 1 }, () => h('i', { class: 'coin' }))));
+    h('div', { class: 'coins' }, Array.from({ length: s.coinCount || 1 }, (_, i) => h('i', { class: `coin${s.unbreakable?.[i] ? ' ub' : ''}`, title: s.unbreakable?.[i] ? '파괴 불가 코인' : null }))));
 }
 
 async function playEvents(events) {
@@ -483,12 +484,13 @@ async function playEvents(events) {
           const pw = panel.querySelector('.clash-power');
           pw.textContent = d.power; pw.classList.remove('bump'); void pw.offsetWidth; pw.classList.add('bump');
           const coins = panel.querySelectorAll('.coin');
-          coins.forEach((c) => { c.className = 'coin'; });
-          // mark flips on the remaining coins, broken coins at the end
-          const broken = coins.length - d.coins;
+          const ub = getSkill(d.uid === ev.a.uid ? clash?.sa : clash?.sb)?.unbreakable || [];
           coins.forEach((c, i) => {
-            if (i >= coins.length - broken) c.classList.add('broken');
-            else if (d.flips[i] != null) c.classList.add(d.flips[i] ? 'heads' : 'tails', 'flip');
+            c.className = `coin${ub[i] ? ' ub' : ''}`;
+            const st = d.states ? d.states[i] : (i >= d.coins ? 'broken' : 'ok');
+            if (st === 'broken') c.classList.add('broken');
+            else if (st === 'weak') c.classList.add('weak');
+            if (st !== 'broken' && d.flips[i] != null) c.classList.add(d.flips[i] ? 'heads' : 'tails', 'flip');
           });
           panel.classList.toggle('win', ev.winner === d.uid);
           panel.classList.toggle('lose', ev.winner && ev.winner !== d.uid);
@@ -523,6 +525,14 @@ async function playEvents(events) {
         addLog(`  ⚖ 가중치 ${ev.targets.length}: ${names} 동시 공격`, 'sys');
         for (const id of ev.targets) unitEl(id)?.classList.add('weight-hit');
         setTimeout(() => ev.targets.forEach((id) => unitEl(id)?.classList.remove('weight-hit')), 900 / (settings.get().speed || 1));
+        break;
+      }
+      case 'unbreakableStrike': {
+        const att = unitView(ev.att);
+        addLog(`  ⛓ ${att?.name}의 파괴 불가 코인 ${ev.coins}개가 반격한다!`, 'clash');
+        const el = unitEl(ev.att); const r = el?.getBoundingClientRect();
+        shoutText('파괴 불가', '#ff2a3a', r ? { x: r.left + r.width / 2, y: r.top + (att?.team === 'enemy' ? r.height + 10 : -20), ms: 1200 } : { ms: 1200 });
+        await wait(450);
         break;
       }
       case 'redirect':

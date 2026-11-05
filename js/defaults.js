@@ -30,8 +30,8 @@ export const DEFAULT_SKILLS = [
       { when: 'onHit', do: 'inflict', status: 'tremor', potency: 3, count: 1, who: 'target' },
       { when: 'onHit', coin: 2, do: 'tremorBurst', who: 'target' },
     ] }),
-  S({ id: 'sk_do3', name: '대지 붕괴', sin: 'sloth', atkType: 'blunt', basePower: 8, coinPower: 4, coinCount: 2, offLevel: 3,
-    desc: '[적중 시] 진동 폭발 / [합 승리 시] 다음 턴 보호 2',
+  S({ id: 'sk_do3', name: '대지 붕괴', sin: 'sloth', atkType: 'blunt', basePower: 8, coinPower: 4, coinCount: 2, offLevel: 3, unbreakable: [false, true],
+    desc: '2번째 코인 파괴 불가 / [적중 시] 진동 폭발 / [합 승리 시] 다음 턴 보호 2',
     effects: [
       { when: 'onHit', do: 'tremorBurst', who: 'target' },
       { when: 'onClashWin', do: 'inflict', status: 'protection', potency: 2, count: 1, who: 'self', nextTurn: true },
@@ -63,8 +63,12 @@ export const DEFAULT_SKILLS = [
   // --- 적: 심연의 사제 ---
   S({ id: 'sk_pr1', name: '침잠의 기도', sin: 'gloom', atkType: 'blunt', basePower: 4, coinPower: 3, coinCount: 2,
     desc: '[적중 시] 침잠 2 부여', effects: [{ when: 'onHit', do: 'inflict', status: 'sinking', potency: 2, count: 2, who: 'target' }] }),
-  S({ id: 'sk_pr2', name: '검은 낫', sin: 'envy', atkType: 'slash', basePower: 6, coinPower: -2, coinCount: 2,
-    desc: '마이너스 코인 / [적중 시] 다음 턴 취약 1', effects: [{ when: 'onHit', do: 'inflict', status: 'fragile', potency: 1, count: 1, who: 'target', nextTurn: true }] }),
+  S({ id: 'sk_pr2', name: '검은 낫', sin: 'envy', atkType: 'slash', basePower: 8, coinPower: -2, coinCount: 2, unbreakable: [true, true],
+    desc: '마이너스·파괴 불가 코인 / 깨진 코인 1개당 최종 위력 -2 / [적중 시] 다음 턴 취약 1',
+    effects: [
+      { when: 'power', do: 'powerPerBroken', value: -2 },
+      { when: 'onHit', do: 'inflict', status: 'fragile', potency: 1, count: 1, who: 'target', nextTurn: true },
+    ] }),
   S({ id: 'sk_pr3', name: '심연 강림', sin: 'gloom', atkType: 'pierce', basePower: 5, coinPower: 4, coinCount: 3, offLevel: 4, weight: 3,
     desc: '가중치 3 / [사용 시] 모든 적에게 침잠 2 부여', effects: [{ when: 'onUse', do: 'inflict', status: 'sinking', potency: 2, count: 1, who: 'enemies' }],
     messages: [{ trigger: 'skillUse', text: '가라앉아라...', color: '#4a7dff' }] }),

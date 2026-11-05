@@ -120,7 +120,7 @@ function renderSkillList(root) {
       portrait(s),
       h('div', { class: 'item-info' },
         h('div', { class: 'item-title' }, h('span', { class: 'sin-dot', style: { background: SIN_COLORS[s.sin] } }), s.name),
-        h('div', { class: 'item-sub' }, `${sinName(s.sin)} · ${atkName(s.atkType)} · ${s.basePower}${s.coinPower >= 0 ? '+' : ''}${s.coinPower} x${s.coinCount}${(s.weight || 1) > 1 ? ` · 가중치 ${s.weight}` : ''}`),
+        h('div', { class: 'item-sub' }, `${sinName(s.sin)} · ${atkName(s.atkType)} · ${s.basePower}${s.coinPower >= 0 ? '+' : ''}${s.coinPower} x${s.coinCount}${(s.weight || 1) > 1 ? ` · 가중치 ${s.weight}` : ''}${(s.unbreakable || []).some(Boolean) ? ` · 파괴불가 ${s.unbreakable.filter(Boolean).length}` : ''}`),
         sourceBadge(s))))));
 }
 
@@ -257,6 +257,18 @@ async function editSkill(orig) {
     vfx: area(s.vfx ? JSON.stringify(s.vfx, null, 2) : '', 6, '비워 두면 죄악 속성/공격 유형에 따른 기본 VFX'),
     vfxPrompt: txt('', 'VFX 추가 요청 (예: 검붉은 불꽃이 회오리치게)'),
   };
+  s.unbreakable = Array.isArray(s.unbreakable) ? s.unbreakable.slice() : [];
+  const ubBox = h('div', { class: 'ub-coins' });
+  const renderUb = () => {
+    const n = Math.max(1, Math.min(10, +f.cnt.value || 1));
+    ubBox.replaceChildren(...Array.from({ length: n }, (_, i) => {
+      const cb = h('input', { type: 'checkbox', checked: !!s.unbreakable[i] });
+      cb.addEventListener('change', () => { s.unbreakable[i] = cb.checked; renderUb(); });
+      return h('label', { class: 'ub-coin-pick' }, cb, h('i', { class: `coin${s.unbreakable[i] ? ' ub' : ''}` }), ` 코인${i + 1}`);
+    }));
+  };
+  f.cnt.addEventListener('input', renderUb);
+  renderUb();
   const aiEffBtn = h('button', { class: 'btn ai', type: 'button' }, '✦ AI로 효과 구현');
   const live = aiLivePanel();
   const liveVfx = aiLivePanel();
@@ -294,6 +306,7 @@ async function editSkill(orig) {
     h('div', { class: 'grid2' }, field('스킬 유형', f.type), field('공격 유형', f.atk)),
     h('div', { class: 'grid4' }, field('기본 위력', f.base), field('코인 위력', f.coin, '음수 = 마이너스 코인'), field('코인 개수', f.cnt), field('공격 레벨 보정', f.off)),
     h('div', { class: 'grid4' }, field('공격 가중치', f.weight, '한 번에 공격하는 적의 수 (1~5). 대상과 그 옆의 적을 함께 때립니다.')),
+    field('파괴 불가 코인', ubBox, '체크한 코인(붉은색)은 합에서 져도 깨지지 않고 위력이 ±1이 됩니다. 공격 스킬이면 합에서 져도 상대 공격이 끝난 뒤 이 코인으로 반격합니다.'),
     field('효과 설명', f.desc),
     h('div', { class: 'row' }, aiEffBtn, h('small', { class: 'hint' }, '설명을 쓰고 누르면 AI가 실제로 동작하는 효과 데이터를 만듭니다.')),
     live.el,
@@ -316,6 +329,7 @@ async function editSkill(orig) {
   Object.assign(s, {
     name: f.name.value.trim() || '이름 없는 스킬', sin: f.sin.value, type: f.type.value, atkType: f.atk.value,
     basePower: +f.base.value || 0, coinPower: +f.coin.value || 0, coinCount: Math.max(1, +f.cnt.value || 1), offLevel: +f.off.value || 0, weight: Math.min(5, Math.max(1, Math.round(+f.weight.value || 1))), desc: f.desc.value.trim(),
+    unbreakable: Array.from({ length: Math.max(1, +f.cnt.value || 1) }, (_, i) => !!s.unbreakable[i]),
   });
   if (asCopy) asNewCopy(s, orig, 'sk');
   try { await saveItem('skill', s); toast('저장했습니다.', 'ok'); } catch (e) { toast(`저장 실패: ${e.message}`, 'error'); }

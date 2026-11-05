@@ -465,6 +465,7 @@
           case 'tremorBurst': tremorBurst(B, w); break;
           case 'damage': applyDamage(B, w, ef.value || 0, skill.name, user); break;
           case 'power': if (extra && extra.addPower) extra.addPower(ef.value || 0); break;
+          case 'powerPerBroken': if (extra && extra.addPower) extra.addPower((ef.value || 0) * (extra.brokenCoins || 0)); break;
           case 'damagePct': if (extra && extra.addDamagePct) extra.addDamagePct(ef.value || 0); break;
           case 'script': {
             const ctx = Object.assign({ self: user, target: w, skill }, extra || {});
@@ -484,40 +485,73 @@
   function defLevelOf(u, skill) { return u.defLevel + ((skill && skill.type !== 'attack') ? (skill.defLevelBonus || 0) : 0) + pot(u, 'defenseUp') - pot(u, 'defenseDown'); }
 
   /** Extra flat power from statuses / passives / skill effects. */
-  function powerMods(B, u, skill, opp, phase) {
+  function powerMods(B, u, skill, opp, phase, brokenCoins) {
     let add = pot(u, 'powerUp') - pot(u, 'powerDown');
-    const ctx = { target: opp, opponent: opp, skill, phase, addPower: (n) => { add += Number(n) || 0; } };
+    const ctx = { target: opp, opponent: opp, skill, phase, brokenCoins: brokenCoins || 0, addPower: (n) => { add += Number(n) || 0; } };
     fire(B, 'modifyPower', u, ctx);
     runSkillEffects(B, phase === 'clash' ? 'clash' : 'power', u, opp, skill, ctx);
     return add;
   }
 
-  /** Flip `n` coins, returning results. */
-  function tossCoins(B, u, skill, n) {
+  // ----- coins ----------------------------------------------------------------------
+  // A skill's coins: { i, ub (unbreakable), broken, weak }.
+  // Losing a clash round breaks the first live coin. An unbreakable coin is not
+  // destroyed: it only stops counting for the clash and keeps a value of ±1 (the
+  // sign of the coin power) for the attacks that follow.
+  function makeCoins(skill) {
+    const n = Math.max(1, skill.coinCount || 1);
+    const ub = Array.isArray(skill.unbreakable) ? skill.unbreakable : [];
+    return Array.from({ length: n }, (_, i) => ({ i, ub: !!ub[i], broken: false, weak: false }));
+  }
+  const liveCoins = (k) => k.filter((c) => !c.broken);
+  const usableCoins = (k) => k.filter((c) => !c.broken || c.ub);
+  const brokenCount = (k) => k.filter((c) => c.broken).length;
+  function breakCoin(k) {
+    const c = k.find((x) => !x.broken);
+    if (c) { c.broken = true; if (c.ub) c.weak = true; }
+  }
+  const coinStates = (k) => k.map((c) => (c.weak ? 'weak' : c.broken ? 'broken' : 'ok'));
+  const isAttackSkill = (sk) => sk.type === 'attack' || sk.type === 'counter';
+
+  /** Flip the given coins, returning heads/tails per coin. */
+  function tossCoins(B, u, skill, coins) {
     const out = [];
-    for (let i = 0; i < n; i++) {
+    for (const c of coins) {
       const heads = B.rng() < headsChance(u);
       out.push(heads);
-      fire(B, 'onCoinToss', u, { skill, heads, coinIndex: i });
+      fire(B, 'onCoinToss', u, { skill, heads, coinIndex: c.i, unbreakable: c.ub });
     }
     return out;
   }
 
-  function coinValue(u, skill) {
+  function coinValue(u, skill, coin) {
     if (u.statuses.paralysis) {
       const s = u.statuses.paralysis;
       s.count -= 1; if (s.count <= 0) delete u.statuses.paralysis;
       return 0;
     }
+    if (coin && coin.weak) return Math.sign(skill.coinPower || 0); // unbreakable coin after a lost clash: ±1
     return skill.coinPower || 0;
   }
 
-  function rollPower(B, u, skill, coinsLeft, opp, phase) {
-    const flips = tossCoins(B, u, skill, coinsLeft);
+  /** Clash roll with the coins still standing. Returns power and flips indexed by coin. */
+  function rollPower(B, u, skill, coins, opp, phase) {
+    const live = liveCoins(coins);
+    const flips = tossCoins(B, u, skill, live);
     let p = skill.basePower || 0;
-    for (const h of flips) if (h) p += coinValue(u, skill);
-    p += powerMods(B, u, skill, opp, phase);
-    return { power: Math.max(0, p), flips };
+    live.forEach((c, j) => { if (flips[j]) p += coinValue(u, skill, c); });
+    p += powerMods(B, u, skill, opp, phase, brokenCount(coins));
+    const byIndex = coins.map(() => null);
+    live.forEach((c, j) => { byIndex[c.i] = flips[j]; });
+    return { power: Math.max(0, p), flips: byIndex };
+  }
+
+  /** After a lost clash: an attack skill strikes back with its unbreakable coins. */
+  function unbreakableStrike(B, L, SL, kL, W) {
+    if (!isAttackSkill(SL) || !kL.some((c) => c.ub)) return;
+    if (L.dead || L.staggered || W.dead || B.result) return;
+    emit(B, { type: 'unbreakableStrike', att: L.uid, def: W.uid, skill: SL.id, coins: kL.filter((c) => c.ub).length });
+    attack(B, L, SL, W, kL.filter((c) => c.ub), 0, null, brokenCount(kL));
   }
 
   // ----- clash ---------------------------------------------------------------------
@@ -528,8 +562,8 @@
     runSkillEffects(B, 'onUse', a, b, sa, {});
     runSkillEffects(B, 'onUse', b, a, sb, {});
 
-    let ca = sa.coinCount || 1;
-    let cb = sb.coinCount || 1;
+    const ka = makeCoins(sa);
+    const kb = makeCoins(sb);
     let count = 0;
     const lvA = offLevel(a, sa);
     const lvB = offLevel(b, sb);
@@ -537,26 +571,27 @@
     const lvBonusA = diff > 0 ? Math.floor(diff / 3) : 0;
     const lvBonusB = diff < 0 ? Math.floor(-diff / 3) : 0;
 
-    while (ca > 0 && cb > 0 && count < MAX_CLASH_ROUNDS && !a.dead && !b.dead) {
-      const ra = rollPower(B, a, sa, ca, b, 'clash');
-      const rb = rollPower(B, b, sb, cb, a, 'clash');
+    while (liveCoins(ka).length && liveCoins(kb).length && count < MAX_CLASH_ROUNDS && !a.dead && !b.dead) {
+      const ra = rollPower(B, a, sa, ka, b, 'clash');
+      const rb = rollPower(B, b, sb, kb, a, 'clash');
       const pa = ra.power + lvBonusA;
       const pb = rb.power + lvBonusB;
       count++;
       let winner = null;
-      if (pa > pb) { cb--; winner = a.uid; } else if (pb > pa) { ca--; winner = b.uid; }
+      if (pa > pb) { breakCoin(kb); winner = a.uid; } else if (pb > pa) { breakCoin(ka); winner = b.uid; }
       emit(B, {
         type: 'clashRound', round: count,
-        a: { uid: a.uid, power: pa, flips: ra.flips, coins: ca }, b: { uid: b.uid, power: pb, flips: rb.flips, coins: cb },
+        a: { uid: a.uid, power: pa, flips: ra.flips, coins: liveCoins(ka).length, states: coinStates(ka) },
+        b: { uid: b.uid, power: pb, flips: rb.flips, coins: liveCoins(kb).length, states: coinStates(kb) },
         winner,
       });
     }
     if (a.dead || b.dead) return;
-    if (ca <= 0 && cb <= 0) return;
-    const aWon = cb <= 0;
+    if (!liveCoins(ka).length && !liveCoins(kb).length) return;
+    const aWon = !liveCoins(kb).length;
     const W = aWon ? a : b; const L = aWon ? b : a;
     const SW = aWon ? sa : sb; const SL = aWon ? sb : sa;
-    const coinsLeft = aWon ? ca : cb;
+    const kW = aWon ? ka : kb; const kL = aWon ? kb : ka;
     W.sp = clamp(W.sp + CLASH_WIN_SP, SP_MIN, SP_MAX);
     emit(B, { type: 'clashEnd', winner: W.uid, loser: L.uid, count, skill: SW.id });
     addSinResource(B, W, SW);
@@ -566,18 +601,15 @@
     runSkillEffects(B, 'onClashLose', L, W, SL, {});
 
     if (SW.type === 'evade') {
-      // Successful evade: no damage. Evader recovers SP equal to a small amount.
       log(B, `${W.name}이(가) 회피에 성공했다!`);
-      return;
-    }
-    if (SW.type === 'guard') {
+    } else if (SW.type === 'guard') {
       log(B, `${W.name}이(가) 공격을 막아냈다!`);
-      return;
+    } else {
+      attack(B, W, SW, L, usableCoins(kW), count, null, brokenCount(kW));
     }
-    attack(B, W, SW, L, coinsLeft, count, null);
+    unbreakableStrike(B, L, SL, kL, W);
   }
 
-  // ----- attack (hits) ----------------------------------------------------------------
   /**
    * Attack weight (가중치): a weight-N skill hits the main target and up to N-1 more
    * enemies next to it (in row order, wrapping). Extra targets don't clash; every
@@ -593,21 +625,20 @@
     return extra;
   }
 
-  function attack(B, att, skill, def, coinsLeft, clashCount, shield) {
-    if (att.dead || def.dead) return;
+  function attack(B, att, skill, def, coins, clashCount, shield, broken) {
+    if (att.dead || def.dead || !coins.length) return;
     const extra = weightTargets(B, att, skill, def);
     if (extra.length) emit(B, { type: 'multiTarget', att: att.uid, skill: skill.id, targets: [def.uid, ...extra.map((u) => u.uid)] });
-    const flips = tossCoins(B, att, skill, coinsLeft);
+    const flips = tossCoins(B, att, skill, coins);
     let power = skill.basePower || 0;
     const shieldBox = { value: shield || 0 };
-    const startIdx = (skill.coinCount || 1) - coinsLeft;
     for (let k = 0; k < flips.length; k++) {
       const targets = [def, ...extra].filter((t) => !t.dead);
       if (att.dead || !targets.length || B.result) break;
       if (att.staggered && k > 0) break;
-      const coinIndex = startIdx + k;
-      if (flips[k]) power += coinValue(att, skill);
-      const mods = powerMods(B, att, skill, targets[0], 'hit');
+      const coinIndex = coins[k].i;
+      if (flips[k]) power += coinValue(att, skill, coins[k]);
+      const mods = powerMods(B, att, skill, targets[0], 'hit', broken || 0);
       const p = Math.max(0, power + mods);
       fire(B, 'onCoinUse', att, { skill, target: targets[0], coinIndex, heads: flips[k] });
       if (att.dead) break;
@@ -805,7 +836,7 @@
       fire(B, 'onSkillUse', u, { target: t, skill: act.skill, clash: false });
       runSkillEffects(B, 'onUse', u, t, act.skill, {});
       addSinResource(B, u, act.skill);
-      attack(B, u, act.skill, t, act.skill.coinCount || 1, 0, null);
+      attack(B, u, act.skill, t, makeCoins(act.skill), 0, null, 0);
     }
 
     if (!B.result) endTurn(B);
@@ -818,24 +849,25 @@
     fire(B, 'onSkillUse', att, { target: def, skill: sa, clash: true });
     if (!defAct.used) { fire(B, 'onSkillUse', def, { target: att, skill: sd, clash: true }); runSkillEffects(B, 'onUse', def, att, sd, {}); defAct.used = true; }
     runSkillEffects(B, 'onUse', att, def, sa, {});
-    let ca = sa.coinCount || 1;
-    let cd = sd.coinCount || 1;
+    const ka = makeCoins(sa);
+    const kd = makeCoins(sd);
     let count = 0;
     let lastDefPower = 0;
-    while (ca > 0 && cd > 0 && count < MAX_CLASH_ROUNDS) {
-      const ra = rollPower(B, att, sa, ca, def, 'clash');
-      const rd = rollPower(B, def, sd, cd, att, 'clash');
+    while (liveCoins(ka).length && liveCoins(kd).length && count < MAX_CLASH_ROUNDS) {
+      const ra = rollPower(B, att, sa, ka, def, 'clash');
+      const rd = rollPower(B, def, sd, kd, att, 'clash');
       count++;
       lastDefPower = rd.power;
       let winner = null;
-      if (ra.power > rd.power) { cd--; winner = att.uid; } else if (rd.power > ra.power) { ca--; winner = def.uid; }
+      if (ra.power > rd.power) { breakCoin(kd); winner = att.uid; } else if (rd.power > ra.power) { breakCoin(ka); winner = def.uid; }
       emit(B, {
         type: 'clashRound', round: count,
-        a: { uid: att.uid, power: ra.power, flips: ra.flips, coins: ca }, b: { uid: def.uid, power: rd.power, flips: rd.flips, coins: cd },
+        a: { uid: att.uid, power: ra.power, flips: ra.flips, coins: liveCoins(ka).length, states: coinStates(ka) },
+        b: { uid: def.uid, power: rd.power, flips: rd.flips, coins: liveCoins(kd).length, states: coinStates(kd) },
         winner,
       });
     }
-    const attWon = cd <= 0;
+    const attWon = !liveCoins(kd).length;
     const W = attWon ? att : def; const L = attWon ? def : att;
     W.sp = clamp(W.sp + CLASH_WIN_SP, SP_MIN, SP_MAX);
     emit(B, { type: 'clashEnd', winner: W.uid, loser: L.uid, count, skill: attWon ? sa.id : sd.id });
@@ -848,15 +880,17 @@
       // Guard that lost still absorbs damage equal to its last power.
       const shield = sd.type === 'guard' ? lastDefPower : 0;
       if (shield) log(B, `${def.name}의 수비가 피해 ${shield}을(를) 흡수한다.`);
-      attack(B, att, sa, def, ca, count, shield);
-    } else if (sd.type === 'counter') {
-      attack(B, def, sd, att, cd, count, null);
-    } else if (sd.type === 'evade') {
-      log(B, `${def.name}이(가) 회피했다!`);
+      attack(B, att, sa, def, usableCoins(ka), count, shield, brokenCount(ka));
+      unbreakableStrike(B, def, sd, kd, att);
     } else {
-      log(B, `${def.name}이(가) 공격을 막아냈다!`);
+      if (sd.type === 'counter') attack(B, def, sd, att, usableCoins(kd), count, null, brokenCount(kd));
+      else if (sd.type === 'evade') log(B, `${def.name}이(가) 회피했다!`);
+      else log(B, `${def.name}이(가) 공격을 막아냈다!`);
+      // the attacker lost, but its unbreakable coins still strike
+      unbreakableStrike(B, att, sa, ka, def);
     }
   }
+
 
   function endTurn(B) {
     emit(B, { type: 'turnEnd', turn: B.turn });
