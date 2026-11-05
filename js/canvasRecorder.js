@@ -3,8 +3,12 @@
 // damage numbers and shout texts onto one canvas, and records that canvas with
 // MediaRecorder. No permission prompt is needed.
 
-const MAX_W = 1280;
-const FPS = 30;
+const IS_MOBILE = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+import { vfxActive } from './vfx.js';
+
+const MAX_W = IS_MOBILE ? 540 : 1280;
+const FPS = IS_MOBILE ? 24 : 30;
+const SETTLE_MS = 450; // CSS transitions (hp bars, lunges) finish within this after a DOM change
 
 // ---------------------------------------------------------------------------
 // Color / style helpers
@@ -147,27 +151,31 @@ function paintShout(ctx, el, map) {
   ctx.restore();
 }
 
-function paintFrame(ctx, W, H, target) {
-  const region = target.getBoundingClientRect();
-  const k = W / Math.max(1, region.width);
-  const map = (px, py) => ({ x: (px - region.left) * k, y: (py - region.top) * k });
-  map.k = k;
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.globalAlpha = 1;
-  const bg = ctx.createRadialGradient(W / 2, H / 2, 0, W / 2, H / 2, Math.max(W, H) * 0.7);
-  bg.addColorStop(0, '#241016'); bg.addColorStop(1, '#0d0b0e');
-  ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
-  // arena contents (skip its own background: drawn above)
-  for (const c of target.children) paintTree(ctx, c, map, 1);
-  // VFX particles
+/** Screen-shake offset currently applied to the arena (translate(x, y) in its inline style). */
+function shakeOffset(target) {
+  const m = /translate\(\s*(-?[\d.]+)px,\s*(-?[\d.]+)px\)/.exec(target.style.transform || '');
+  return m ? { x: +m[1], y: +m[2] } : { x: 0, y: 0 };
+}
+
+function makeMap(target, k) {
+  const r = target.getBoundingClientRect();
+  const sh = shakeOffset(target);
+  const left = r.left - sh.x; const top = r.top - sh.y; // the arena without shake
+  const map = (px, py) => ({ x: (px - left) * k, y: (py - top) * k });
+  map.k = k; map.left = left; map.top = top; map.width = r.width; map.shake = sh;
+  return map;
+}
+
+/** Cheap per-frame layers on top: VFX particles, damage numbers, shout texts, banners. */
+function paintOverlays(ctx, W, H, map, withVfx) {
+  const k = map.k;
   const vfx = document.getElementById('vfx-canvas');
-  if (vfx && vfx.width) {
+  if (withVfx && vfx && vfx.width) {
     const sx = vfx.width / innerWidth;
     ctx.save(); ctx.globalCompositeOperation = 'lighter';
-    try { ctx.drawImage(vfx, region.left * sx, region.top * sx, region.width * sx, (H / k) * sx, 0, 0, W, H); } catch { /* ignore */ }
+    try { ctx.drawImage(vfx, map.left * sx, map.top * sx, map.width * sx, (H / k) * sx, 0, 0, W, H); } catch { /* ignore */ }
     ctx.restore();
   }
-  // overlays that live outside the arena
   for (const el of document.querySelectorAll('.pop-num, .vfx-flash, .result-banner')) paintTree(ctx, el, map, 1);
   for (const el of document.querySelectorAll('.fx-shout')) paintShout(ctx, el, map);
 }
@@ -179,24 +187,116 @@ export function canvasRecordingSupported() {
   return !!(window.MediaRecorder && HTMLCanvasElement.prototype.captureStream);
 }
 
+// Chunks: pieces of the arena painted and cached separately (a unit card, the clash
+// panel, the top bar...). A DOM change repaints only the chunk it happened in.
+const CHUNK_SEL = '.unit, #clash-stage, .arena-top, .arena-actions';
+
+function chunksOf(target) {
+  const out = [];
+  for (const el of target.querySelectorAll(CHUNK_SEL)) if (!el.parentElement.closest(CHUNK_SEL)) out.push(el);
+  return out;
+}
+
+const PAD = 16; // css px around a chunk: things like the speed die stick out of the card
+
+function paintChunk(entry, el, k) {
+  const r = el.getBoundingClientRect();
+  const w = Math.max(1, Math.ceil((r.width + PAD * 2) * k)); const h = Math.max(1, Math.ceil((r.height + PAD * 2) * k));
+  if (!entry.canvas) entry.canvas = document.createElement('canvas');
+  const c = entry.canvas;
+  if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
+  const cx = c.getContext('2d');
+  cx.setTransform(1, 0, 0, 1, 0, 0); cx.clearRect(0, 0, w, h); cx.globalAlpha = 1;
+  const map = (px, py) => ({ x: (px - r.left + PAD) * k, y: (py - r.top + PAD) * k });
+  map.k = k;
+  paintTree(cx, el, map, 1);
+}
+
 /** Start recording the element returned by getTarget() (re-queried every frame). */
-export function startCanvasRecording(getTarget, mime) {
+export function startCanvasRecording(getTarget) {
   const first = getTarget();
   if (!first) throw new Error('녹화할 전투 화면이 없습니다.');
   const r0 = first.getBoundingClientRect();
-  const W = Math.round(Math.min(MAX_W, Math.max(640, r0.width * 2)) / 2) * 2;
+  const W = Math.round(Math.min(MAX_W, Math.max(IS_MOBILE ? 400 : 540, r0.width * (IS_MOBILE ? 1.25 : 2))) / 2) * 2;
   const H = Math.round((W * Math.max(r0.height, 300) / r0.width) / 2) * 2;
   const canvas = document.createElement('canvas');
   canvas.width = W; canvas.height = H;
   const ctx = canvas.getContext('2d');
-  let running = true;
-  let last = 0;
+  const layer = document.createElement('canvas');
+  layer.width = W; layer.height = H;
+  const lctx = layer.getContext('2d');
+  const bg = lctx.createRadialGradient(W / 2, H / 2, 0, W / 2, H / 2, Math.max(W, H) * 0.7);
+  bg.addColorStop(0, '#241016'); bg.addColorStop(1, '#0d0b0e');
+
+  const cache = new Map(); // chunk element -> { canvas, dirtyUntil }
+  let structureDirtyUntil = Infinity; // something outside a known chunk changed
+  const now = () => performance.now();
+  const obs = new MutationObserver((list) => {
+    for (const m of list) {
+      const node = m.target.nodeType === 1 ? m.target : m.target.parentElement;
+      if (!node) continue;
+      // the screen shake rewrites the arena's inline transform every frame: applied at compose time
+      if (m.type === 'attributes' && m.attributeName === 'style' && node.id === 'arena') continue;
+      const chunk = node.closest(CHUNK_SEL);
+      if (chunk && cache.has(chunk)) cache.get(chunk).dirtyUntil = now() + SETTLE_MS;
+      else structureDirtyUntil = now() + SETTLE_MS;
+    }
+  });
+  const host = document.getElementById('tab-battle') || document.body;
+  obs.observe(host, { subtree: true, childList: true, attributes: true, characterData: true });
+
+  let running = true; let last = 0; let n = 0; let wasBusy = true; let lastTarget = null; let lastRects = '';
   const loop = (t) => {
     if (!running) return;
     if (t - last >= 1000 / FPS - 2) {
-      last = t;
+      last = t; n++;
       const target = getTarget();
-      if (target) { try { paintFrame(ctx, W, H, target); } catch (e) { console.warn('frame', e); } }
+      if (target) {
+        try {
+          const tr = target.getBoundingClientRect();
+          const k = W / Math.max(1, tr.width);
+          const map = makeMap(target, k);
+          if (target !== lastTarget) { cache.clear(); structureDirtyUntil = Infinity; lastTarget = target; }
+          const chunks = chunksOf(target);
+          let repainted = false;
+          const half = n % 2 === 0;
+          for (const el of chunks) {
+            let e = cache.get(el);
+            if (!e) { e = { canvas: null, dirtyUntil: Infinity }; cache.set(el, e); }
+            if (!e.canvas || e.dirtyUntil === Infinity || (t < e.dirtyUntil && half) || (t < structureDirtyUntil && half)) {
+              paintChunk(e, el, k);
+              if (e.dirtyUntil === Infinity) e.dirtyUntil = 0;
+              repainted = true;
+            }
+          }
+          for (const el of [...cache.keys()]) if (!el.isConnected) cache.delete(el);
+          if (structureDirtyUntil === Infinity) structureDirtyUntil = 0;
+          // cards move (lunge / clash zoom): recompose when any rect changed
+          const rects = chunks.map((el) => { const r = el.getBoundingClientRect(); return `${r.left | 0},${r.top | 0},${r.width | 0},${r.height | 0}`; }).join(';');
+          if (repainted || rects !== lastRects) {
+            lastRects = rects;
+            lctx.setTransform(1, 0, 0, 1, 0, 0); lctx.globalAlpha = 1;
+            lctx.fillStyle = bg; lctx.fillRect(0, 0, W, H);
+            for (const el of chunks) {
+              const e = cache.get(el); if (!e || !e.canvas) continue;
+              const r = el.getBoundingClientRect();
+              const p = map(r.left - map.shake.x - PAD, r.top - map.shake.y - PAD);
+              lctx.drawImage(e.canvas, p.x, p.y, (r.width + PAD * 2) * k, (r.height + PAD * 2) * k);
+            }
+            repainted = true;
+          }
+          const fx = vfxActive();
+          const overlays = document.querySelector('.pop-num, .fx-shout, .vfx-flash, .result-banner');
+          // nothing moved: skip the frame; the video simply holds the previous picture
+          if (repainted || fx || overlays || wasBusy) {
+            ctx.setTransform(1, 0, 0, 1, 0, 0);
+            if (map.shake.x || map.shake.y) { ctx.fillStyle = '#0d0b0e'; ctx.fillRect(0, 0, W, H); }
+            ctx.drawImage(layer, map.shake.x * k, map.shake.y * k);
+            paintOverlays(ctx, W, H, map, fx);
+          }
+          wasBusy = repainted || fx || !!overlays; // one clean frame after effects end
+        } catch (e) { console.warn('frame', e); }
+      }
     }
     requestAnimationFrame(loop);
   };
@@ -204,7 +304,7 @@ export function startCanvasRecording(getTarget, mime) {
   const stream = canvas.captureStream(FPS);
   return {
     stream,
-    stop() { running = false; for (const tr of stream.getTracks()) tr.stop(); },
+    stop() { running = false; obs.disconnect(); for (const tr of stream.getTracks()) tr.stop(); },
     canvas,
   };
 }

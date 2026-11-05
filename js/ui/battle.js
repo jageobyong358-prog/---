@@ -166,7 +166,7 @@ function renderArena() {
       h('div', { class: 'arena-actions' },
         h('button', { class: 'btn', disabled: B.playing || B.auto || !!v.result, onclick: autoPlan }, '자동 지정'),
         h('button', { class: 'btn primary big', disabled: B.playing || B.auto || !!v.result, onclick: resolve }, B.auto ? '자동 진행 중…' : '전투 개시 ⚔'))),
-    h('div', { id: 'battle-log' }, B.log.map((l) => h('div', { class: `log ${l.cls}` }, l.text))),
+    h('div', { id: 'battle-log' }, (logQueue = [], B.log.map((l) => h('div', { class: `log ${l.cls}` }, l.text)))),
     v.result ? h('div', { class: `result-banner ${v.result}` }, v.result === 'win' ? '승리' : '패배',
       h('div', { class: 'row' },
         isRecording() ? h('button', { class: 'btn', disabled: true }, '영상 마무리 중…') : null,
@@ -367,13 +367,29 @@ async function resolve() {
 // ---------------------------------------------------------------------------
 // Event playback
 // ---------------------------------------------------------------------------
+let logQueue = []; let logRaf = 0;
 function addLog(text, cls = '') {
   if (!B) return;
   B.log.push({ text, cls });
   if (B.log.length > 300) B.log.shift();
-  const el = document.getElementById('battle-log');
-  if (el) { el.appendChild(h('div', { class: `log ${cls}` }, text)); el.scrollTop = el.scrollHeight; }
+  // append in one batch per frame: each append + scroll forces a layout
+  logQueue.push({ text, cls });
+  if (!logRaf) logRaf = requestAnimationFrame(flushLog);
 }
+function flushLog() {
+  logRaf = 0;
+  const el = document.getElementById('battle-log');
+  const items = logQueue; logQueue = [];
+  if (!el || !items.length) return;
+  el.append(...items.map((l) => h('div', { class: `log ${l.cls}` }, l.text)));
+  while (el.childElementCount > 300) el.firstElementChild.remove();
+  el.scrollTop = el.scrollHeight;
+}
+
+// Write to the DOM only when a value really changed (each write costs style/layout work,
+// and marks the frame dirty for the phone recorder).
+function setText(el, v) { const t = String(v); if (el && el.textContent !== t) el.textContent = t; }
+function setStyle(el, k, v) { if (el && el.style[k] !== v) el.style[k] = v; }
 
 function applySnapshot(s) {
   if (!s) return;
@@ -381,18 +397,29 @@ function applySnapshot(s) {
     const u = unitView(uid);
     if (!u) continue;
     u.hp = st.hp; u.sp = st.sp; u.staggered = st.stg; u.dead = st.dead; u.speed = st.spd;
-    u.statuses = Object.fromEntries(Object.entries(st.st).map(([k, [p, c]]) => [k, { potency: p, count: c }]));
+    const stKey = JSON.stringify(st.st);
+    const statusChanged = u._stKey !== stKey;
+    if (statusChanged) {
+      u._stKey = stKey;
+      u.statuses = Object.fromEntries(Object.entries(st.st).map(([k, [p, c]]) => [k, { potency: p, count: c }]));
+    }
     const el = unitEl(uid);
     if (!el) continue;
-    el.classList.toggle('dead', u.dead); el.classList.toggle('staggered', !!u.staggered);
-    el.querySelector('.hpfill').style.width = `${Math.max(0, (u.hp / u.maxHp) * 100)}%`;
-    el.querySelector('.hptext').textContent = `${u.hp} / ${u.maxHp}`;
+    if (el.classList.contains('dead') !== !!u.dead) el.classList.toggle('dead', u.dead);
+    if (el.classList.contains('staggered') !== !!u.staggered) el.classList.toggle('staggered', !!u.staggered);
+    setStyle(el.querySelector('.hpfill'), 'width', `${Math.max(0, (u.hp / u.maxHp) * 100)}%`);
+    setText(el.querySelector('.hptext'), `${u.hp} / ${u.maxHp}`);
     const sp = el.querySelector('.spfill');
-    sp.classList.toggle('neg', u.sp < 0);
-    sp.style.width = `${Math.abs(u.sp) / 45 * 50}%`; sp.style.left = u.sp < 0 ? `${50 - Math.abs(u.sp) / 45 * 50}%` : '50%';
-    el.querySelector('.sptext').textContent = `SP ${u.sp}`;
-    el.querySelector('.speed-die').textContent = u.dead ? '✝' : u.staggered ? '—' : u.speed;
-    el.querySelector('.statuses').replaceChildren(...Object.entries(u.statuses).map(([id, x]) => statusChip(id, x.potency, x.count)));
+    if (sp.classList.contains('neg') !== u.sp < 0) sp.classList.toggle('neg', u.sp < 0);
+    setStyle(sp, 'width', `${Math.abs(u.sp) / 45 * 50}%`);
+    setStyle(sp, 'left', u.sp < 0 ? `${50 - Math.abs(u.sp) / 45 * 50}%` : '50%');
+    setText(el.querySelector('.sptext'), `SP ${u.sp}`);
+    setText(el.querySelector('.speed-die'), u.dead ? '✝' : u.staggered ? '—' : u.speed);
+    const box = el.querySelector('.statuses');
+    if (statusChanged || box.dataset.k !== stKey) {
+      box.dataset.k = stKey;
+      box.replaceChildren(...Object.entries(u.statuses).map(([id, x]) => statusChip(id, x.potency, x.count)));
+    }
   }
 }
 

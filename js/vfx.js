@@ -5,6 +5,10 @@ const SIN_COLORS = {
 };
 
 let canvas; let ctx; let particles = []; let running = false;
+// Phones have 2.5-3x pixel ratios; a full-screen canvas at that size is very slow to clear and draw.
+const IS_MOBILE = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+const DPR = Math.min(window.devicePixelRatio || 1, IS_MOBILE ? 1.25 : 1.5);
+const MAX_PARTICLES = IS_MOBILE ? 350 : 700;
 let shakeUntil = 0; let shakeMag = 0;
 
 function ensureCanvas() {
@@ -13,7 +17,7 @@ function ensureCanvas() {
   canvas.id = 'vfx-canvas';
   document.body.appendChild(canvas);
   ctx = canvas.getContext('2d');
-  const resize = () => { canvas.width = innerWidth * devicePixelRatio; canvas.height = innerHeight * devicePixelRatio; ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0); };
+  const resize = () => { canvas.width = Math.round(innerWidth * DPR); canvas.height = Math.round(innerHeight * DPR); ctx.setTransform(DPR, 0, 0, DPR, 0, 0); };
   resize();
   addEventListener('resize', resize);
 }
@@ -99,12 +103,14 @@ function frame() {
       case 'slash': {
         const prog = Math.min(1, t * 2.2);
         const dx = Math.cos(p.ang) * p.len / 2; const dy = Math.sin(p.ang) * p.len / 2;
-        ctx.shadowColor = p.c; ctx.shadowBlur = p.glow;
         ctx.lineCap = 'round';
-        ctx.lineWidth = p.w * (1 - t * 0.7);
         ctx.beginPath();
         ctx.moveTo(p.x - dx, p.y - dy);
         ctx.lineTo(p.x - dx + dx * 2 * prog, p.y - dy + dy * 2 * prog);
+        // glow: a wide faint stroke under the blade (much cheaper than shadowBlur)
+        const ga = ctx.globalAlpha;
+        ctx.globalAlpha = ga * 0.25; ctx.lineWidth = p.w * (1 - t * 0.7) + p.glow * 0.6; ctx.stroke();
+        ctx.globalAlpha = ga; ctx.lineWidth = p.w * (1 - t * 0.7);
         ctx.stroke();
         ctx.lineWidth = Math.max(1, p.w * 0.3);
         ctx.strokeStyle = '#ffffff';
@@ -116,16 +122,17 @@ function frame() {
         ctx.beginPath(); ctx.arc(p.x, p.y, p.r * (0.4 + a), 0, Math.PI * 2); ctx.fill();
         break;
       case 'ring':
-        ctx.shadowColor = p.c; ctx.shadowBlur = 20;
-        ctx.lineWidth = p.w * a;
-        ctx.beginPath(); ctx.arc(p.x, p.y, p.R * (0.15 + t * 0.85), 0, Math.PI * 2); ctx.stroke();
+        ctx.beginPath(); ctx.arc(p.x, p.y, p.R * (0.15 + t * 0.85), 0, Math.PI * 2);
+        { const ga = ctx.globalAlpha; ctx.globalAlpha = ga * 0.25; ctx.lineWidth = p.w * a + 12; ctx.stroke(); ctx.globalAlpha = ga; }
+        ctx.lineWidth = p.w * a; ctx.stroke();
         break;
       case 'beam': {
         ctx.translate(p.x, p.y); ctx.rotate(p.ang + (p.dir < 0 ? Math.PI : 0));
         const g = ctx.createLinearGradient(-innerWidth, 0, 0, 0);
         g.addColorStop(0, 'transparent'); g.addColorStop(1, p.c);
-        ctx.fillStyle = g; ctx.shadowColor = p.c; ctx.shadowBlur = 30;
-        const w = p.w * (1 - t) ;
+        const w = p.w * (1 - t);
+        ctx.fillStyle = g;
+        { const ga = ctx.globalAlpha; ctx.globalAlpha = ga * 0.3; ctx.fillRect(-innerWidth, -w, innerWidth + 50, w * 2); ctx.globalAlpha = ga; }
         ctx.fillRect(-innerWidth, -w / 2, innerWidth + 40, w);
         ctx.fillStyle = '#fff'; ctx.fillRect(-innerWidth, -w / 6, innerWidth + 30, w / 3);
         break;
@@ -144,8 +151,10 @@ function frame() {
         ctx.globalCompositeOperation = 'source-over';
         ctx.font = `900 ${p.size * (1 + t * 0.3)}px system-ui, -apple-system, "Segoe UI", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif`;
         ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-        ctx.shadowColor = p.c; ctx.shadowBlur = 30;
-        ctx.fillText(p.text, p.x + rnd(-3, 3), p.y - t * 30 + rnd(-3, 3));
+        { const jx = p.x + rnd(-3, 3); const jy = p.y - t * 30 + rnd(-3, 3);
+          ctx.lineWidth = 10; ctx.lineJoin = 'round'; const ga = ctx.globalAlpha;
+          ctx.globalAlpha = ga * 0.35; ctx.strokeText(p.text, jx, jy); ctx.globalAlpha = ga;
+          ctx.fillText(p.text, jx, jy); }
         break;
       default: break;
     }
@@ -178,6 +187,7 @@ export function playVfx(spec, target, dir = 1) {
   const r = target ? target.getBoundingClientRect() : { left: innerWidth / 2, top: innerHeight / 2, width: 0, height: 0 };
   const x = r.left + r.width / 2; const y = r.top + r.height / 2;
   for (const L of spec.layers.slice(0, 12)) spawnLayer(L, x, y, dir);
+  if (particles.length > MAX_PARTICLES) particles.splice(0, particles.length - MAX_PARTICLES);
   if (spec.shake) shake(num(spec.shake, 6, 0, 30), num(spec.duration, 500, 100, 2000) * 0.5);
   if (spec.flash) flash(color(spec.flash, '#ffffff'));
   kick();
@@ -235,5 +245,8 @@ export function popNumber(target, text, cls = '') {
   document.body.appendChild(el);
   setTimeout(() => el.remove(), 1100);
 }
+
+/** True while particles or a screen shake are animating (the phone recorder skips idle frames). */
+export function vfxActive() { return particles.length > 0 || performance.now() < shakeUntil; }
 
 export { SIN_COLORS };
